@@ -136,6 +136,76 @@ static GElf_Addr get_glink_vma(struct ltelf *lte, GElf_Addr ppcgot,
 	return 0;
 }
 
+/* FULL_DATA is where the resulting data will be stored.  DATA is
+ * initial chunk obtained by elf_getdata.  If FULL_DATA->d_buf !=
+ * DATA->d_buf after the function returns, then FULL_DATA contains a
+ * malloc'd buffer.  Returns 1 for success, 0 for failure.  Failures
+ * are reported immediately.  Any allocated data is freed on error
+ * conditions.  On success, if MALLOCEDP != NULL, *MALLOCEDP is set to
+ * 0 or 1 depending on whether the data in FULL_DATA was malloc'ed.
+ */
+static int
+read_multichunk_data(Elf_Scn * scn, GElf_Shdr * shdr, Elf_Data * full_data,
+		     int *mallocedp)
+{
+	Elf_Data *data;
+	data = elf_getdata(scn, NULL);
+	if (data == NULL) {
+		error(0, 0, "read_multichunk_data: %s", elf_errmsg(-1));
+		return 0;
+	}
+	if (data->d_buf == NULL) {
+		error(0, 0, "read_multichunk_data: no data");
+		return 0;
+	}
+
+	*full_data = *data;
+	full_data->d_size = 0;
+	full_data->d_buf = NULL;
+
+	if (elf_getdata(scn, data) != NULL) {
+		if (mallocedp != NULL)
+			*mallocedp = 1;
+		for (; data != NULL; data = elf_getdata(scn, data)) {
+			if (data->d_type != full_data->d_type
+			    || data->d_version	!= full_data->d_version
+			    || data->d_align != full_data->d_align) {
+				error(0, 0,
+				      "read_multichunk_data: "
+				      "inconsistent values");
+				goto fail;
+			}
+
+			size_t nsize = full_data->d_size + data->d_size;
+			void * nbuf = realloc(full_data->d_buf, nsize);
+			if (nbuf == NULL) {
+				error(0, errno, "read_multichunk_data");
+				goto fail;
+			}
+			full_data->d_buf = nbuf;
+			memcpy(full_data->d_buf + full_data->d_size,
+			       data->d_buf, data->d_size);
+			full_data->d_size = nsize;
+		}
+	} else {
+		if (mallocedp != NULL)
+			*mallocedp = 0;
+		full_data->d_size = data->d_size;
+		full_data->d_buf = data->d_buf;
+	}
+
+	if (full_data->d_size != shdr->sh_size) {
+		error(0, 0, "read_multichunk_data: data incomplete");
+		goto fail;
+	}
+
+	return 1;
+
+fail:
+	free (full_data->d_buf);
+	return 0;
+}
+
 void
 do_init_elf(struct ltelf *lte, const char *filename) {
 	int i;
@@ -309,29 +379,30 @@ do_init_elf(struct ltelf *lte, const char *filename) {
 				}
 			}
 		} else if (shdr.sh_type == SHT_HASH) {
-			Elf_Data *data;
 			size_t j;
 
 			lte->hash_type = SHT_HASH;
 
-			data = elf_getdata(scn, NULL);
-			if (data == NULL || elf_getdata(scn, data) != NULL
-			    || data->d_off || data->d_size != shdr.sh_size)
+			Elf_Data data;
+			int malloced;
+			if (!read_multichunk_data(scn, &shdr, &data, &malloced))
 				error(EXIT_FAILURE, 0,
-				      "Couldn't get .hash data from \"%s\"",
-				      filename);
+				      "While reading .hash from %s.", filename);
+			if (malloced)
+				lte->lte_flags |= LTE_HASH_MALLOCED;
+			assert(data.d_buf != NULL);
 
 			if (shdr.sh_entsize == 4) {
 				/* Standard conforming ELF.  */
-				if (data->d_type != ELF_T_WORD)
+				if (data.d_type != ELF_T_WORD)
 					error(EXIT_FAILURE, 0,
-					      "Couldn't get .hash data from \"%s\"",
+					      "Wrong type of .hash data from \"%s\"",
 					      filename);
-				lte->hash = (Elf32_Word *) data->d_buf;
+				lte->hash = (Elf32_Word *) data.d_buf;
 			} else if (shdr.sh_entsize == 8) {
 				/* Alpha or s390x.  */
 				Elf32_Word *dst, *src;
-				size_t hash_count = data->d_size / 8;
+				size_t hash_count = data.d_size / 8;
 
 				lte->hash = (Elf32_Word *)
 				    malloc(hash_count * sizeof(Elf32_Word));
@@ -341,22 +412,23 @@ do_init_elf(struct ltelf *lte, const char *filename) {
 					      filename);
 				lte->lte_flags |= LTE_HASH_MALLOCED;
 				dst = lte->hash;
-				src = (Elf32_Word *) data->d_buf;
-				if ((data->d_type == ELF_T_WORD
+				src = (Elf32_Word *) data.d_buf;
+				if ((data.d_type == ELF_T_WORD
 				     && __BYTE_ORDER == __BIG_ENDIAN)
-				    || (data->d_type == ELF_T_XWORD
+				    || (data.d_type == ELF_T_XWORD
 					&& lte->ehdr.e_ident[EI_DATA] ==
 					ELFDATA2MSB))
 					++src;
 				for (j = 0; j < hash_count; ++j, src += 2)
 					*dst++ = *src;
+				if (malloced)
+					free(data.d_buf);
 			} else
 				error(EXIT_FAILURE, 0,
 				      "Unknown .hash sh_entsize in \"%s\"",
 				      filename);
 		} else if (shdr.sh_type == SHT_GNU_HASH
 			   && lte->hash == NULL) {
-			Elf_Data *data;
 
 			lte->hash_type = SHT_GNU_HASH;
 
@@ -368,13 +440,17 @@ do_init_elf(struct ltelf *lte, const char *filename) {
 					filename, shdr.sh_entsize);
 			}
 
-			data = loaddata(scn, &shdr);
-			if (data == NULL)
+			Elf_Data data;
+			int malloced;
+			if (!read_multichunk_data(scn, &shdr, &data, &malloced))
 				error(EXIT_FAILURE, 0,
-				      "Couldn't get .gnu.hash data from \"%s\"",
+				      "While reading .gnu.hash from %s.",
 				      filename);
+			if (malloced)
+				lte->lte_flags |= LTE_HASH_MALLOCED;
+			assert(data.d_buf != NULL);
 
-			lte->hash = (Elf32_Word *) data->d_buf;
+			lte->hash = (Elf32_Word *) data.d_buf;
 		} else if (shdr.sh_type == SHT_PROGBITS
 			   || shdr.sh_type == SHT_NOBITS) {
 			if (strcmp(name, ".plt") == 0) {
