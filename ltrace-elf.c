@@ -175,6 +175,13 @@ read_multichunk_data(Elf_Scn * scn, GElf_Shdr * shdr, Elf_Data * full_data,
 				      "inconsistent values");
 				goto fail;
 			}
+			assert(data->d_off >= 0);
+			if ((size_t)data->d_off != full_data->d_size) {
+				error(0, 0,
+				      "read_multichunk_data: "
+				      "discontinuous chunks");
+				goto fail;
+			}
 
 			size_t nsize = full_data->d_size + data->d_size;
 			void * nbuf = realloc(full_data->d_buf, nsize);
