@@ -178,31 +178,26 @@ umovebytes(Process *proc, void *addr, void *laddr, size_t len) {
 		long a;
 		char c[sizeof(long)];
 	} a;
-	int started = 0;
-	size_t offset = 0, bytes_read = 0;
+	size_t offset = 0;
 
+	errno = 0;
 	while (offset < len) {
 		a.a = ptrace(PTRACE_PEEKTEXT, proc->pid, addr + offset, 0);
 		if (a.a == -1 && errno) {
-			if (started && errno == EIO)
-				return bytes_read;
+			if (offset > 0 && errno == EIO)
+				return offset;
 			else
 				return -1;
 		}
-		started = 1;
 
-		if (len - offset >= sizeof(long)) {
-			memcpy(laddr + offset, &a.c[0], sizeof(long));
-			bytes_read += sizeof(long);
-		}
-		else {
-			memcpy(laddr + offset, &a.c[0], len - offset);
-			bytes_read += (len - offset);
-		}
-		offset += sizeof(long);
+		size_t batch_len = sizeof(long);
+		if (len - offset < batch_len)
+			batch_len = len - offset;
+		memcpy(laddr + offset, &a.c[0], batch_len);
+		offset += batch_len;
 	}
 
-	return bytes_read;
+	return offset;
 }
 
 /* Read a series of bytes starting at the process's memory address
