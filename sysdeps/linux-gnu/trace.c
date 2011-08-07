@@ -228,3 +228,39 @@ umovestr(Process *proc, void *addr, int len, void *laddr) {
 	*(char *)(laddr + offset) = '\0';
 	return 0;
 }
+
+size_t
+ustorebytes(Process *proc, void *addr, void *laddr, size_t len) {
+
+	union {
+		long a;
+		char c[sizeof(long)];
+	} a;
+	size_t bytes_written = 0;
+
+	errno = 0;
+	while (bytes_written < len) {
+		size_t batch_len = sizeof(long);
+		if (len - bytes_written < batch_len) {
+			batch_len = len - bytes_written;
+			a.a = ptrace(PTRACE_PEEKTEXT, proc->pid, addr, 0);
+			if (a.a == -1 && errno)
+				goto fail;
+		}
+		memcpy(a.c, laddr + bytes_written, batch_len);
+
+		long r = ptrace(PTRACE_POKETEXT,
+				proc->pid, addr + bytes_written, a.a);
+		if (r == -1 && errno) {
+		fail:
+			if (bytes_written > 0 && errno == EIO)
+				return bytes_written;
+			else
+				return -1;
+		}
+
+		bytes_written += batch_len;
+	}
+
+	return bytes_written;
+}
