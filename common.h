@@ -128,6 +128,10 @@ enum toplt {
 	LS_TOPLT_EXEC,		/* PLT for this symbol is executable. */
 	LS_TOPLT_POINT		/* PLT for this symbol is a non-executable. */
 };
+enum symtype {
+	LS_ST_FUNCTION,		/* Ltrace will place return breakpoints.  */
+	LS_ST_PROBE,		/* No return breakpoints will be placed.  */
+};
 
 extern Function * list_of_functions;
 extern char *PLTs_initialized_by_here;
@@ -137,6 +141,7 @@ struct library_symbol {
 	void * enter_addr;
 	char needs_init;
 	enum toplt plt_type;
+	enum symtype sym_type;
 	char is_weak;
 	struct library_symbol * next;
 };
@@ -240,7 +245,8 @@ extern void do_init_elf(struct ltelf *lte, const char *filename);
 extern void do_close_elf(struct ltelf *lte);
 extern int in_load_libraries(const char *name, struct ltelf *lte, size_t count, GElf_Sym *sym);
 extern struct library_symbol *library_symbols;
-extern void add_library_symbol(GElf_Addr addr, const char *name,
+extern struct library_symbol *add_library_symbol(GElf_Addr addr,
+		const char *name,
 		struct library_symbol **library_symbolspp,
 		enum toplt type_of_plt, int is_weak);
 

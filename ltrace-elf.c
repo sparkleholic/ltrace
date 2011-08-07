@@ -16,9 +16,6 @@
 
 void do_init_elf(struct ltelf *lte, const char *filename);
 void do_close_elf(struct ltelf *lte);
-void add_library_symbol(GElf_Addr addr, const char *name,
-		struct library_symbol **library_symbolspp,
-		enum toplt type_of_plt, int is_weak);
 int in_load_libraries(const char *name, struct ltelf *lte, size_t count, GElf_Sym *sym);
 static GElf_Addr opd2addr(struct ltelf *ltc, GElf_Addr addr);
 
@@ -397,6 +394,18 @@ do_init_elf(struct ltelf *lte, const char *filename) {
 				lte->opd = elf_rawdata(scn, NULL);
 			}
 #endif
+			else if (strcmp(name, ".stapsdt.base") == 0) {
+				lte->stapsdt_base = shdr.sh_addr;
+			}
+		} else if (shdr.sh_type == SHT_NOTE) {
+			if (strcmp(name, ".note.stapsdt") == 0) {
+				lte->stapsdt = loaddata(scn, &shdr);
+				if (lte->stapsdt == NULL) {
+					error(EXIT_FAILURE, 0,
+					      "Couldn't get SHT_NOTE data from \"%s\"",
+					      filename);
+				}
+			}
 		}
 	}
 
@@ -465,7 +474,7 @@ do_close_elf(struct ltelf *lte) {
 	close(lte->fd);
 }
 
-void
+struct library_symbol *
 add_library_symbol(GElf_Addr addr, const char *name,
 		   struct library_symbol **library_symbolspp,
 		   enum toplt type_of_plt, int is_weak) {
@@ -487,6 +496,7 @@ add_library_symbol(GElf_Addr addr, const char *name,
 	*library_symbolspp = s;
 
 	debug(2, "addr: %p, symbol: \"%s\"", (void *)(uintptr_t) addr, name);
+	return s;
 }
 
 /* stolen from elfutils-0.123 */
@@ -816,6 +826,109 @@ read_elf(Process *proc) {
 				 "%s: Couldn't find symbol \"%s\" in file \"%s\" assuming it will be loaded by libdl!"
 				 "\n", badthing, xptr->name, proc->filename);
 		}
+
+
+	/* We _need_ to know the value of stapsdt_base.  If we ignore
+	 * it, we risk mangling some innocent instruction with the
+	 * breakpoint.  */
+	if (1 // options.stapsdt
+	    && lte->stapsdt != NULL
+	    && lte->stapsdt_base != 0) {
+
+		/* The following is mostly put together from elfutils'
+		 * readelf and libebl.  */
+		size_t offset = 0;
+		GElf_Nhdr nhdr;
+		size_t name_offset;
+		size_t desc_offset;
+		Elf_Data *data = lte->stapsdt;
+
+		while (offset < data->d_size
+		       && (offset = gelf_getnote (data, offset,
+						  &nhdr, &name_offset,
+						  &desc_offset)) > 0) {
+
+			/* Looking for systemtap probe note.  */
+			const char *name = data->d_buf + name_offset;
+			if (strcmp ("stapsdt", name))
+				break;
+
+			if (nhdr.n_type != 3) {
+				error(0, 0, "SDT version %d not supported.\n",
+				      nhdr.n_type);
+				break;
+			}
+
+			const char *desc = data->d_buf + desc_offset;
+			size_t descsz = nhdr.n_descsz;
+
+			/* PC, base ref and semaphore address. */
+			union {
+				Elf64_Addr a64[3];
+				Elf32_Addr a32[3];
+			} addrs;
+			size_t addrs_size
+				= gelf_fsize(lte->elf, ELF_T_ADDR,
+					     3, EV_CURRENT);
+			if (descsz < addrs_size + 3) {
+			invalid_sdt:
+				error(0, 0, "invalid SDT probe descriptor\n");
+				break;
+			}
+			Elf_Data src = {
+				.d_type = ELF_T_ADDR,
+				.d_version = EV_CURRENT,
+				.d_buf = (void *) desc,
+				.d_size = addrs_size
+			};
+
+			Elf_Data dst = {
+				.d_type = ELF_T_ADDR,
+				.d_version = EV_CURRENT,
+				.d_buf = &addrs,
+				.d_size = addrs_size
+			};
+
+			unsigned int encode
+				= elf_getident(lte->elf, NULL)[EI_DATA];
+			if (gelf_xlatetom(lte->elf, &dst, &src, encode)
+			    == NULL)
+				goto invalid_sdt;
+
+			const char *provider = desc + addrs_size;
+			const char *pname
+				= memchr(provider, '\0',
+					 desc + descsz - provider);
+			if (pname == NULL)
+				goto invalid_sdt;
+			++pname;
+
+			/* We ignore semaphore address ATM.  */
+			GElf_Addr pc, base;
+			if (gelf_getclass(lte->elf) == ELFCLASS32) {
+				pc = addrs.a32[0];
+				base = addrs.a32[1];
+			} else {
+				pc = addrs.a64[0];
+				base = addrs.a64[1];
+			}
+			GElf_Off bias = lte->stapsdt_base - base;
+			debug(2, "got STAP note %s %s pc=%p bias=%p",
+			      provider, pname,
+			      (void *)pc, (void *)bias);
+			size_t full_len = strlen(provider) + 2 + strlen(pname);
+			char * full = malloc(full_len);
+			if (full != NULL
+			    && sprintf(full, "%s::%s", provider, pname) > 0) {
+				struct library_symbol * sym =
+					add_library_symbol(pc + bias, full,
+							   lib_tail,
+							   LS_TOPLT_NONE, 0);
+				sym->sym_type = LS_ST_PROBE;
+			}
+		}
+	}
+
 	if (exit_out) {
 		exit (1);
 	}

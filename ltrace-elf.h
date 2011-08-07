@@ -33,6 +33,8 @@ struct ltelf {
 	size_t mips_gotsym;
 #endif // __mips__
 	GElf_Addr plt_stub_vma;
+	Elf_Data *stapsdt;
+	GElf_Addr stapsdt_base;
 };
 
 #define ELF_MAX_SEGMENTS  50

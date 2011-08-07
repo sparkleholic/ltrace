@@ -622,11 +622,33 @@ handle_breakpoint(Event *event) {
 			arch_check_dbg(event->proc);
 		}
 		if (event->proc->state != STATE_IGNORED) {
-			event->proc->stack_pointer = get_stack_pointer(event->proc);
-			event->proc->return_addr =
-				get_return_addr(event->proc, event->proc->stack_pointer);
-			callstack_push_symfunc(event->proc, sbp->libsym);
-			output_left(LT_TOF_FUNCTION, event->proc, sbp->libsym->name);
+			if (sbp->libsym->sym_type != LS_ST_PROBE) {
+				void * sp;
+				event->proc->stack_pointer
+					= sp = get_stack_pointer(event->proc);
+				event->proc->return_addr =
+					get_return_addr(event->proc, sp);
+				callstack_push_symfunc(event->proc,
+						       sbp->libsym);
+				output_left(LT_TOF_FUNCTION, event->proc,
+					    sbp->libsym->name);
+			} else {
+				arg_type_info void_t = {
+					ARGTYPE_VOID
+				};
+				Function prot = {
+					.name = sbp->libsym->name,
+					.return_info = &void_t,
+					.num_params = 0,
+					.arg_info = {},
+					.params_right = 0,
+					.next = NULL
+				};
+				output_left_prot(LT_TOF_FUNCTION, event->proc,
+						 sbp->libsym->name, &prot);
+				output_right_prot(LT_TOF_FUNCTIONR, event->proc,
+						  sbp->libsym->name, &prot); 
+			}
 		}
 #ifdef PLT_REINITALISATION_BP
 		if (event->proc->need_to_reinitialize_breakpoints

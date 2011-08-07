@@ -1,3 +1,13 @@
+2011-08-07  Petr Machata  <pmachata@redhat.com>
+
+	* common.h (enum symtype): New type
+	(struct library_symbol): New field of that type.
+	(add_library_symbol): Returns newly-added symbol.
+	* handle_event.c (handle_breakpoint): Handle LS_ST_PROBE symbols.
+	* ltrace-elf.c, ltrace-elf.h: Support loading of stapsdt sections.
+	* output.c, output.h (output_left_prot, output_right_prot): New
+	functions.  Meat of output_* moved here, output_* became wrappers.
+
 2011-02-16  Petr Machata  <pmachata@redhat.com>
 
 	* etc/ltrace.conf: Add memmove.

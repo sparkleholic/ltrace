@@ -153,15 +153,17 @@ tabto(int col) {
 }
 
 void
-output_left(enum tof type, Process *proc, char *function_name) {
-	Function *func;
+output_left_prot(enum tof type, Process *proc, char *function_name,
+		 Function *func)
+{
+	if (options.summary) {
+		return;
+	}
+
 	static arg_type_info *arg_unknown = NULL;
 	if (arg_unknown == NULL)
 	    arg_unknown = lookup_prototype(ARGTYPE_UNKNOWN);
 
-	if (options.summary) {
-		return;
-	}
 	if (current_proc) {
 		fprintf(options.output, " <unfinished ...>\n");
 		current_column = 0;
@@ -178,7 +180,6 @@ output_left(enum tof type, Process *proc, char *function_name) {
 	current_column += fprintf(options.output, "%s(", function_name);
 #endif
 
-	func = name2func(function_name);
 	if (!func) {
 		int i;
 		for (i = 0; i < 4; i++) {
@@ -209,8 +210,16 @@ output_left(enum tof type, Process *proc, char *function_name) {
 }
 
 void
-output_right(enum tof type, Process *proc, char *function_name) {
-	Function *func = name2func(function_name);
+output_left(enum tof type, Process *proc, char *function_name)
+{
+	return output_left_prot(type, proc, function_name,
+				name2func(function_name));
+}
+
+void
+output_right_prot(enum tof type, Process *proc, char *function_name,
+		  Function *func)
+{
 	static arg_type_info *arg_unknown = NULL;
 	if (arg_unknown == NULL)
 	    arg_unknown = lookup_prototype(ARGTYPE_UNKNOWN);
@@ -222,7 +231,7 @@ output_right(enum tof type, Process *proc, char *function_name) {
 			    dict_init(dict_key2hash_string,
 				      dict_key_cmp_string);
 		}
-		st = dict_find_entry(dict_opt_c, function_name);
+		st = dict_find_entry(dict_opt_c, (char *)function_name);
 		if (!st) {
 			char *na;
 			st = malloc(sizeof(struct opt_c_struct));
@@ -321,4 +330,11 @@ output_right(enum tof type, Process *proc, char *function_name) {
 
 	current_proc = 0;
 	current_column = 0;
+}
+
+void
+output_right(enum tof type, Process *proc, char *function_name)
+{
+	return output_right_prot(type, proc, function_name,
+				 name2func(function_name));
 }
