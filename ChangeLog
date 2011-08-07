@@ -1,5 +1,13 @@
 2011-08-07  Petr Machata  <pmachata@redhat.com>
 
+	* common.h (struct library_symbol): Add union for per-symbol-type
+	variables.  st_probe member for symbols of type LS_ST_PROBE.
+	* ltrace-elf.c: Initialize here.
+	* sysdeps/linux-gnu/breakpoint.c: Bump the semaphore counter that
+	guards the probe.
+
+2011-08-07  Petr Machata  <pmachata@redhat.com>
+
 	* common.h, sysdeps/linux-gnu/trace.c (ustorebytes): New function.
 
 2011-08-07  Petr Machata  <pmachata@redhat.com>

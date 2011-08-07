@@ -485,6 +485,7 @@ add_library_symbol(GElf_Addr addr, const char *name,
 	s = malloc(sizeof(struct library_symbol) + strlen(name) + 1);
 	if (s == NULL)
 		error(EXIT_FAILURE, errno, "add_library_symbol failed");
+	memset(s, 0, sizeof(*s));
 
 	s->needs_init = 1;
 	s->is_weak = is_weak;
@@ -903,14 +904,15 @@ read_elf(Process *proc) {
 				goto invalid_sdt;
 			++pname;
 
-			/* We ignore semaphore address ATM.  */
-			GElf_Addr pc, base;
+			GElf_Addr pc, base, semaphore;
 			if (gelf_getclass(lte->elf) == ELFCLASS32) {
 				pc = addrs.a32[0];
 				base = addrs.a32[1];
+				semaphore = addrs.a32[2];
 			} else {
 				pc = addrs.a64[0];
 				base = addrs.a64[1];
+				semaphore = addrs.a64[2];
 			}
 			GElf_Off bias = lte->stapsdt_base - base;
 			debug(2, "got STAP note %s %s pc=%p bias=%p",
@@ -925,6 +927,7 @@ read_elf(Process *proc) {
 							   lib_tail,
 							   LS_TOPLT_NONE, 0);
 				sym->sym_type = LS_ST_PROBE;
+				sym->st_probe.sema = (void *)(semaphore + bias);
 			}
 		}
 	}

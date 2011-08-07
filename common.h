@@ -140,8 +140,16 @@ struct library_symbol {
 	char * name;
 	void * enter_addr;
 	char needs_init;
-	enum toplt plt_type;
 	enum symtype sym_type;
+	union {
+		/* Data for LS_ST_PROBE symbols.  */
+		struct {
+			/* Address of semaphore guarding the probe, if any.  */
+			void * sema;
+		} st_probe;
+	};
+	/* XXX Candidates for moving into the union.  */
+	enum toplt plt_type;
 	char is_weak;
 	struct library_symbol * next;
 };
