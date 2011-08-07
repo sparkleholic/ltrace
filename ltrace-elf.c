@@ -916,10 +916,10 @@ read_elf(Process *proc) {
 			debug(2, "got STAP note %s %s pc=%p bias=%p",
 			      provider, pname,
 			      (void *)pc, (void *)bias);
-			size_t full_len = strlen(provider) + 2 + strlen(pname);
+			size_t full_len = strlen(provider) + 9 + strlen(pname);
 			char * full = malloc(full_len);
 			if (full != NULL
-			    && sprintf(full, "%s::%s", provider, pname) > 0) {
+			    && sprintf(full, "probe %s::%s", provider, pname) > 0) {
 				struct library_symbol * sym =
 					add_library_symbol(pc + bias, full,
 							   lib_tail,
