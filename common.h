@@ -22,12 +22,25 @@ extern char * command;
 
 extern int exiting;  /* =1 if we have to exit ASAP */
 
+/* In the case of ltrace, the relationship between Breakpoints and
+ * SymBreakpoints is 1:n--several SymBreakpoints can share a single
+ * address.  */
 typedef struct Breakpoint Breakpoint;
+typedef struct SymBreakpoint SymBreakpoint;
+
+struct SymBreakpoint {
+	SymBreakpoint * next;
+	struct library_symbol * libsym;
+};
+
 struct Breakpoint {
 	void * addr;
 	unsigned char orig_value[BREAKPOINT_LENGTH];
 	int enabled;
-	struct library_symbol * libsym;
+
+	/* Chain of SymBreakpoints.  */
+	SymBreakpoint * symbps;
+
 #ifdef __arm__
 	int thumb_mode;
 #endif
@@ -238,8 +251,12 @@ extern void execute_program(Process *, char **);
 extern int display_arg(enum tof type, Process * proc, int arg_num, arg_type_info * info);
 extern Breakpoint * address2bpstruct(Process * proc, void * addr);
 extern void breakpoints_init(Process * proc);
+
 extern void insert_breakpoint(Process * proc, void * addr, struct library_symbol * libsym);
 extern void delete_breakpoint(Process * proc, void * addr);
+extern Breakpoint * clone_breakpoint(const Breakpoint * bp);
+extern const char * breakpoint_name(const Breakpoint * bp);
+
 extern void enable_all_breakpoints(Process * proc);
 extern void disable_all_breakpoints(Process * proc);
 extern void reinitialize_breakpoints(Process *);

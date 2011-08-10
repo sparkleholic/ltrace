@@ -12,11 +12,8 @@
 extern void arch_enable_breakpoint(pid_t, Breakpoint *);
 void
 enable_breakpoint(pid_t pid, Breakpoint *sbp) {
-	if (sbp->libsym) {
-		debug(DEBUG_PROCESS, "enable_breakpoint: pid=%d, addr=%p, symbol=%s", pid, sbp->addr, sbp->libsym->name);
-	} else {
-		debug(DEBUG_PROCESS, "enable_breakpoint: pid=%d, addr=%p", pid, sbp->addr);
-	}
+	debug(DEBUG_PROCESS, "enable_breakpoint: pid=%d, addr=%p, symbol=%s",
+	      pid, sbp->addr, breakpoint_name(sbp));
 	arch_enable_breakpoint(pid, sbp);
 }
 #else
@@ -27,16 +24,12 @@ void
 enable_breakpoint(pid_t pid, Breakpoint *sbp) {
 	unsigned int i, j;
 
-	if (sbp->libsym) {
-		debug(DEBUG_PROCESS, "enable_breakpoint: pid=%d, addr=%p, symbol=%s", pid, sbp->addr, sbp->libsym->name);
-	} else {
-		debug(DEBUG_PROCESS, "enable_breakpoint: pid=%d, addr=%p", pid, sbp->addr);
-	}
+	debug(DEBUG_PROCESS, "enable_breakpoint: pid=%d, addr=%p, symbol=%s",
+	      pid, sbp->addr, breakpoint_name(sbp));
 
 	for (i = 0; i < 1 + ((BREAKPOINT_LENGTH - 1) / sizeof(long)); i++) {
-		long a =
-		    ptrace(PTRACE_PEEKTEXT, pid, sbp->addr + i * sizeof(long),
-			   0);
+		long a = ptrace(PTRACE_PEEKTEXT, pid,
+				sbp->addr + i * sizeof(long), 0);
 		for (j = 0;
 		     j < sizeof(long)
 		     && i * sizeof(long) + j < BREAKPOINT_LENGTH; j++) {
@@ -50,15 +43,20 @@ enable_breakpoint(pid_t pid, Breakpoint *sbp) {
 
 	/* When using probe symbols, we need to bump the
 	 * semaphore.  */
-	struct library_symbol * libsym = sbp->libsym;
-	if (libsym != NULL
-	    && libsym->sym_type == LS_ST_PROBE
-	    && libsym->st_probe.sema != 0) {
-		Process * proc = pid2proc(pid);
-		uint16_t sema = 0;
-		umovebytes(proc, libsym->st_probe.sema, &sema, sizeof(sema));
-		++sema;
-		ustorebytes(proc, libsym->st_probe.sema, &sema, sizeof(sema));
+	SymBreakpoint * symbp = sbp->symbps;
+	for (; symbp != NULL; symbp = symbp->next) {
+		struct library_symbol * libsym = symbp->libsym;
+		if (libsym != NULL
+		    && libsym->sym_type == LS_ST_PROBE
+		    && libsym->st_probe.sema != 0) {
+			Process * proc = pid2proc(pid);
+			uint16_t sema = 0;
+			umovebytes(proc, libsym->st_probe.sema,
+				   &sema, sizeof(sema));
+			++sema;
+			ustorebytes(proc, libsym->st_probe.sema,
+				    &sema, sizeof(sema));
+		}
 	}
 }
 #endif				/* ARCH_HAVE_ENABLE_BREAKPOINT */
@@ -67,11 +65,8 @@ enable_breakpoint(pid_t pid, Breakpoint *sbp) {
 extern void arch_disable_breakpoint(pid_t, const Breakpoint *sbp);
 void
 disable_breakpoint(pid_t pid, const Breakpoint *sbp) {
-	if (sbp->libsym) {
-		debug(DEBUG_PROCESS, "disable_breakpoint: pid=%d, addr=%p, symbol=%s", pid, sbp->addr, sbp->libsym->name);
-	} else {
-		debug(DEBUG_PROCESS, "disable_breakpoint: pid=%d, addr=%p", pid, sbp->addr);
-	}
+	debug(DEBUG_PROCESS, "disable_breakpoint: pid=%d, addr=%p, symbol=%s",
+	      pid, sbp->addr, breakpoint_name(sbp));
 	arch_disable_breakpoint(pid, sbp);
 }
 #else
@@ -79,16 +74,12 @@ void
 disable_breakpoint(pid_t pid, const Breakpoint *sbp) {
 	unsigned int i, j;
 
-	if (sbp->libsym) {
-		debug(DEBUG_PROCESS, "disable_breakpoint: pid=%d, addr=%p, symbol=%s", pid, sbp->addr, sbp->libsym->name);
-	} else {
-		debug(DEBUG_PROCESS, "disable_breakpoint: pid=%d, addr=%p", pid, sbp->addr);
-	}
+	debug(DEBUG_PROCESS, "disable_breakpoint: pid=%d, addr=%p, symbol=%s",
+	      pid, sbp->addr, breakpoint_name(sbp));
 
 	for (i = 0; i < 1 + ((BREAKPOINT_LENGTH - 1) / sizeof(long)); i++) {
-		long a =
-		    ptrace(PTRACE_PEEKTEXT, pid, sbp->addr + i * sizeof(long),
-			   0);
+		long a = ptrace(PTRACE_PEEKTEXT, pid,
+				sbp->addr + i * sizeof(long), 0);
 		for (j = 0;
 		     j < sizeof(long)
 		     && i * sizeof(long) + j < BREAKPOINT_LENGTH; j++) {
@@ -101,15 +92,20 @@ disable_breakpoint(pid_t pid, const Breakpoint *sbp) {
 
 	/* When using probe symbols, we need to decrease the
 	 * semaphore again.  */
-	struct library_symbol * libsym = sbp->libsym;
-	if (libsym != NULL
-	    && libsym->sym_type == LS_ST_PROBE
-	    && libsym->st_probe.sema != 0) {
-		Process * proc = pid2proc(pid);
-		uint16_t sema = 1;
-		umovebytes(proc, libsym->st_probe.sema, &sema, sizeof(sema));
-		--sema;
-		ustorebytes(proc, libsym->st_probe.sema, &sema, sizeof(sema));
+	SymBreakpoint * symbp = sbp->symbps;
+	for (; symbp != NULL; symbp = symbp->next) {
+		struct library_symbol * libsym = symbp->libsym;
+		if (libsym != NULL
+		    && libsym->sym_type == LS_ST_PROBE
+		    && libsym->st_probe.sema != 0) {
+			Process * proc = pid2proc(pid);
+			uint16_t sema = 1;
+			umovebytes(proc, libsym->st_probe.sema,
+				   &sema, sizeof(sema));
+			--sema;
+			ustorebytes(proc, libsym->st_probe.sema,
+				    &sema, sizeof(sema));
+		}
 	}
 }
 #endif				/* ARCH_HAVE_DISABLE_BREAKPOINT */

@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <errno.h>
+#include <error.h>
 
 #ifdef __powerpc__
 #include <sys/ptrace.h>
@@ -38,20 +40,42 @@ insert_breakpoint(Process *proc, void *addr,
 	if (libsym)
 		libsym->needs_init = 0;
 
+	SymBreakpoint * symbp = NULL;
 	sbp = dict_find_entry(proc->breakpoints, addr);
 	if (!sbp) {
-		sbp = calloc(1, sizeof(Breakpoint));
+		sbp = calloc(1, sizeof(*sbp));
 		if (!sbp) {
-			return;	/* TODO FIXME XXX: error_mem */
+			int err;
+		memerr:
+			err = errno;
+			free(symbp);
+			free(sbp);
+			error(0, err, "insert_breakpoint");
+			return;
 		}
-		dict_enter(proc->breakpoints, addr, sbp);
-		sbp->addr = addr;
-		sbp->libsym = libsym;
 	}
+
+	symbp = calloc(1, sizeof(*symbp));
+	if (symbp == NULL)
+		goto memerr;
+
+	/* Now that we know it all passed, add the breakpoint to the
+	 * dictionary, if necessary.  */
+	if (sbp->addr == NULL) {
+		sbp->addr = addr;
+		if (dict_enter(proc->breakpoints, sbp->addr, sbp))
+			goto memerr;
+	}
+
+	symbp->libsym = libsym;
+	symbp->next = sbp->symbps;
+	sbp->symbps = symbp;
+
 #ifdef __arm__
 	sbp->thumb_mode = thumb_mode | proc->thumb_mode;
 	proc->thumb_mode = 0;
 #endif
+
 	sbp->enabled++;
 	if (sbp->enabled == 1 && proc->pid)
 		enable_breakpoint(proc->pid, sbp);
@@ -73,6 +97,58 @@ delete_breakpoint(Process *proc, void *addr) {
 	if (sbp->enabled == 0)
 		disable_breakpoint(proc->pid, sbp);
 	assert(sbp->enabled >= 0);
+}
+
+/* Find a name that can be used to describe the breakpoint.  */
+const char *
+breakpoint_name(const Breakpoint * bp)
+{
+	SymBreakpoint * symbp;
+
+	if (bp != NULL)
+		for (symbp = bp->symbps; symbp != NULL; symbp = symbp->next)
+			if (symbp->libsym != NULL
+			    && symbp->libsym->name != NULL)
+				return symbp->libsym->name;
+
+	return "(??""?)";
+}
+
+Breakpoint *
+clone_breakpoint(const Breakpoint * bp) {
+	Breakpoint * copy;
+	int err;
+
+	debug(DEBUG_FUNCTION, "breakpoint_clone(%p)", bp);
+	copy = malloc(sizeof(*copy));
+	if (copy == NULL) {
+		err = errno;
+	memerr:
+		free(copy);
+		error(1, errno, "clone_breakpoint");
+	}
+	memcpy(copy, bp, sizeof(*copy));
+
+	copy->symbps = NULL;
+	SymBreakpoint * symbp;
+	for (symbp = bp->symbps; symbp != NULL; symbp = symbp->next) {
+		SymBreakpoint * copy_symbp = malloc(sizeof(*copy_symbp));
+		if (copy_symbp == NULL) {
+			err = errno;
+			for (copy_symbp = copy->symbps; copy_symbp != NULL; ) {
+				SymBreakpoint * next = copy_symbp->next;
+				free(copy_symbp);
+				copy_symbp = next;
+			}
+			goto memerr;
+		}
+
+		memcpy(copy_symbp, symbp, sizeof(*copy_symbp));
+		copy_symbp->next = copy->symbps;
+		copy->symbps = copy_symbp;
+	}
+
+	return copy;
 }
 
 static void

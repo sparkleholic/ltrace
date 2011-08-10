@@ -114,15 +114,7 @@ address_clone(void * addr) {
 
 static void *
 breakpoint_clone(void * bp) {
-	Breakpoint * b;
-	debug(DEBUG_FUNCTION, "breakpoint_clone(%p)", bp);
-	b = malloc(sizeof(Breakpoint));
-	if (!b) {
-		perror("malloc()");
-		exit(1);
-	}
-	memcpy(b, bp, sizeof(Breakpoint));
-	return b;
+	return clone_breakpoint((Breakpoint *)bp);
 }
 
 typedef struct Pending_New Pending_New;
@@ -537,6 +529,7 @@ handle_breakpoint(Event *event) {
 		return;
 	}
 
+	int was_return_breakpoint = 0;
 	for (i = event->proc->callstack_depth - 1; i >= 0; i--) {
 		if (event->e_un.brk_addr ==
 		    event->proc->callstack[i].return_addr) {
@@ -612,32 +605,26 @@ handle_breakpoint(Event *event) {
 			continue_after_breakpoint(event->proc,
 					address2bpstruct(event->proc,
 						event->e_un.brk_addr));
-			return;
+			was_return_breakpoint = 1;
 		}
 	}
 
-	if ((sbp = address2bpstruct(event->proc, event->e_un.brk_addr))) {
-		if (strcmp(sbp->libsym->name, "") == 0) {
-			debug(2, "Hit _dl_debug_state breakpoint!\n");
-			arch_check_dbg(event->proc);
-		}
-		if (event->proc->state != STATE_IGNORED) {
-			if (sbp->libsym->sym_type != LS_ST_PROBE) {
-				void * sp;
-				event->proc->stack_pointer
-					= sp = get_stack_pointer(event->proc);
-				event->proc->return_addr =
-					get_return_addr(event->proc, sp);
-				callstack_push_symfunc(event->proc,
-						       sbp->libsym);
-				output_left(LT_TOF_FUNCTION, event->proc,
-					    sbp->libsym->name);
-			} else {
+	/* XXX This is a hack.  We would much rather have this done
+	 * with a series of SymBreakpoint callbacks.  */
+	if (event->proc->state != STATE_IGNORED
+	    && (sbp = address2bpstruct(event->proc, event->e_un.brk_addr))) {
+
+		SymBreakpoint * symbp;
+		for (symbp = sbp->symbps; symbp != NULL; symbp = symbp->next) {
+			if (symbp->libsym == NULL)
+				continue;
+
+			if (symbp->libsym->sym_type == LS_ST_PROBE) {
 				arg_type_info void_t = {
 					ARGTYPE_VOID
 				};
 				Function prot = {
-					.name = sbp->libsym->name,
+					.name = symbp->libsym->name,
 					.return_info = &void_t,
 					.num_params = 0,
 					.arg_info = {},
@@ -645,18 +632,39 @@ handle_breakpoint(Event *event) {
 					.next = NULL
 				};
 				output_left_prot(LT_TOF_FUNCTION, event->proc,
-						 sbp->libsym->name, &prot);
+						 symbp->libsym->name, &prot);
 				output_right_prot(LT_TOF_FUNCTIONR, event->proc,
-						  sbp->libsym->name, &prot); 
+						  symbp->libsym->name, &prot);
+			} else if (was_return_breakpoint) {
+				/* Skip the rest of the tests.  */
+			} else if (strcmp(symbp->libsym->name, "") == 0) {
+				debug(2, "Hit _dl_debug_state breakpoint!\n");
+				arch_check_dbg(event->proc);
+			} else {
+				void * sp;
+				event->proc->stack_pointer
+					= sp = get_stack_pointer(event->proc);
+				event->proc->return_addr =
+					get_return_addr(event->proc, sp);
+				callstack_push_symfunc(event->proc,
+						       symbp->libsym);
+				output_left(LT_TOF_FUNCTION, event->proc,
+					    symbp->libsym->name);
+
+#ifdef PLT_REINITALISATION_BP
+				if (event->proc->need_to_reinitialize_breakpoints
+				    && (strcmp(symbp->libsym->name,
+					       PLTs_initialized_by_here) == 0))
+					reinitialize_breakpoints(event->proc);
+#endif
 			}
 		}
-#ifdef PLT_REINITALISATION_BP
-		if (event->proc->need_to_reinitialize_breakpoints
-		    && (strcmp(sbp->libsym->name, PLTs_initialized_by_here) ==
-			0))
-			reinitialize_breakpoints(event->proc);
-#endif
+	}
 
+	if (was_return_breakpoint)
+		return;
+
+	if (sbp != NULL) {
 		continue_after_breakpoint(event->proc, sbp);
 		return;
 	}
