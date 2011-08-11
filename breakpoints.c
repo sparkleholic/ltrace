@@ -21,9 +21,9 @@ address2bpstruct(Process *proc, void *addr) {
 }
 
 void
-insert_breakpoint(Process *proc, void *addr,
-		  struct library_symbol *libsym) {
+insert_breakpoint(Process *proc, void *addr, SymBreakpoint * symbp) {
 	Breakpoint *sbp;
+	struct library_symbol * libsym = symbp->libsym;
 
 #ifdef __arm__
 	int thumb_mode = (int)addr & 1;
@@ -40,7 +40,6 @@ insert_breakpoint(Process *proc, void *addr,
 	if (libsym)
 		libsym->needs_init = 0;
 
-	SymBreakpoint * symbp = NULL;
 	sbp = dict_find_entry(proc->breakpoints, addr);
 	if (!sbp) {
 		sbp = calloc(1, sizeof(*sbp));
@@ -48,26 +47,16 @@ insert_breakpoint(Process *proc, void *addr,
 			int err;
 		memerr:
 			err = errno;
-			free(symbp);
 			free(sbp);
 			error(0, err, "insert_breakpoint");
 			return;
 		}
-	}
 
-	symbp = calloc(1, sizeof(*symbp));
-	if (symbp == NULL)
-		goto memerr;
-
-	/* Now that we know it all passed, add the breakpoint to the
-	 * dictionary, if necessary.  */
-	if (sbp->addr == NULL) {
 		sbp->addr = addr;
 		if (dict_enter(proc->breakpoints, sbp->addr, sbp))
 			goto memerr;
 	}
 
-	symbp->libsym = libsym;
 	symbp->next = sbp->symbps;
 	sbp->symbps = symbp;
 
@@ -112,6 +101,16 @@ breakpoint_name(const Breakpoint * bp)
 				return symbp->libsym->name;
 
 	return "(??""?)";
+}
+
+extern SymBreakpoint *
+create_symbp(struct library_symbol * libsym)
+{
+	SymBreakpoint * symbp = calloc(1, sizeof(*symbp));
+	if (symbp == NULL)
+		return NULL;
+	symbp->libsym = libsym;
+	return symbp;
 }
 
 Breakpoint *
@@ -282,7 +281,12 @@ breakpoints_init(Process *proc) {
 	}
 	for (sym = proc->list_of_symbols; sym; sym = sym->next) {
 		/* proc->pid==0 delays enabling. */
-		insert_breakpoint(proc, sym2addr(proc, sym), sym);
+		SymBreakpoint * symbp = create_symbp(sym);
+		if (symbp == NULL) {
+			error(0, errno, "breakpoints_init");
+			continue;
+		}
+		insert_breakpoint(proc, sym2addr(proc, sym), symbp);
 	}
 	proc->callstack_depth = 0;
 	proc->breakpoints_enabled = -1;
@@ -296,6 +300,11 @@ reinitialize_breakpoints(Process *proc) {
 
 	sym = proc->list_of_symbols;
 
+	puts("XXXXXXX reinitialize_breakpoints");
+	/* This assumes that we have one breakpoint per address.  It
+	 * needs to be adapted to the new world.  */
+
+#if 0
 	while (sym) {
 		if (sym->needs_init) {
 			insert_breakpoint(proc, sym2addr(proc, sym),
@@ -309,4 +318,5 @@ reinitialize_breakpoints(Process *proc) {
 		}
 		sym = sym->next;
 	}
+#endif
 }

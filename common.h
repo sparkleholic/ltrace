@@ -31,6 +31,21 @@ typedef struct SymBreakpoint SymBreakpoint;
 struct SymBreakpoint {
 	SymBreakpoint * next;
 	struct library_symbol * libsym;
+
+	/* Called when the breakpoint is hit.  */
+	void (* on_hit_cb) (SymBreakpoint * self,
+			    Breakpoint * bp, Process * proc);
+
+	/* If non-NULL, called when the breakpoint is enabled.  */
+	void (* on_enable_cb) (SymBreakpoint * self,
+			       Breakpoint * bp, Process * proc);
+
+	/* If non-NULL, called when the breakpoint is disabled. */
+	void (* on_disable_cb) (SymBreakpoint * self,
+				Breakpoint * bp, Process * proc);
+
+	/* If non-NULL, called when breakpoint is completely removed.  */
+	void (* destroy) (SymBreakpoint * self);
 };
 
 struct Breakpoint {
@@ -252,10 +267,11 @@ extern int display_arg(enum tof type, Process * proc, int arg_num, arg_type_info
 extern Breakpoint * address2bpstruct(Process * proc, void * addr);
 extern void breakpoints_init(Process * proc);
 
-extern void insert_breakpoint(Process * proc, void * addr, struct library_symbol * libsym);
+extern void insert_breakpoint(Process * proc, void * addr, SymBreakpoint * symbp);
 extern void delete_breakpoint(Process * proc, void * addr);
 extern Breakpoint * clone_breakpoint(const Breakpoint * bp);
 extern const char * breakpoint_name(const Breakpoint * bp);
+extern SymBreakpoint * create_symbp(struct library_symbol * libsym);
 
 extern void enable_all_breakpoints(Process * proc);
 extern void disable_all_breakpoints(Process * proc);

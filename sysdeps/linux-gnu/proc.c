@@ -8,6 +8,8 @@
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
+#include <errno.h>
+#include <error.h>
 
 /* /proc/pid doesn't exist just after the fork, and sometimes `ltrace'
  * couldn't open it to find the executable.  So it may be necessary to
@@ -179,6 +181,8 @@ linkmap_add_cb(void *data) { //const char *lib_name, ElfW(Addr) addr) {
 
 			GElf_Sym sym;
 			GElf_Addr addr;
+			SymBreakpoint * symbp;
+			void * bp_addr;
 
 			if (in_load_libraries(xptr->name, &lte, 1, &sym)) {
 				debug(2, "found symbol %s @ %#" PRIx64
@@ -187,7 +191,10 @@ linkmap_add_cb(void *data) { //const char *lib_name, ElfW(Addr) addr) {
 				addr = sym.st_value;
 				add_library_symbol(addr, xptr->name, &library_symbols, LS_TOPLT_NONE, 0);
 				xptr->found = 1;
-				insert_breakpoint(lm_add->proc, sym2addr(lm_add->proc, library_symbols), library_symbols);
+				symbp = create_symbp(library_symbols);
+				bp_addr = sym2addr(lm_add->proc,
+						   library_symbols);
+				insert_breakpoint(lm_add->proc, bp_addr, symbp);
 			}
 		}
 		do_close_elf(&lte);
@@ -252,6 +259,14 @@ hook_libdl_cb(void *data) {
 	}
 }
 
+static void
+linkmap_on_hit_cb(SymBreakpoint * self,
+		  Breakpoint * bp, Process * proc)
+{
+	debug(2, "Hit _dl_debug_state breakpoint!");
+	arch_check_dbg(proc);
+}
+
 int
 linkmap_init(Process *proc, struct ltelf *lte) {
 	void *dbg_addr = NULL, *dyn_addr = GELF_ADDR_CAST(lte->dyn_addr);
@@ -274,8 +289,26 @@ linkmap_init(Process *proc, struct ltelf *lte) {
 
 	data.lte = lte;
 
-	add_library_symbol(rdbg->r_brk, "", &library_symbols, LS_TOPLT_NONE, 0);
-	insert_breakpoint(proc, sym2addr(proc, library_symbols), library_symbols);
+	SymBreakpoint * symbp = NULL;
+	struct library_symbol * libsym
+		= add_library_symbol(rdbg->r_brk, "", &library_symbols,
+				     LS_TOPLT_NONE, 0);
+	if (libsym == NULL) {
+		int err;
+	memerr:
+		err = errno;
+		free(rdbg);
+		free(libsym);
+		error(0, err, "linkmap_init");
+		return -1;
+	}
+
+	symbp = create_symbp(libsym);
+	if (symbp == NULL)
+		goto memerr;
+	symbp->on_hit_cb = linkmap_on_hit_cb;
+
+	insert_breakpoint(proc, sym2addr(proc, libsym), symbp);
 
 	crawl_linkmap(proc, rdbg, hook_libdl_cb, &data);
 

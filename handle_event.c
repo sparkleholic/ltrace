@@ -7,6 +7,8 @@
 #include <signal.h>
 #include <assert.h>
 #include <sys/time.h>
+#include <error.h>
+#include <errno.h>
 
 #include "common.h"
 
@@ -701,6 +703,12 @@ callstack_push_syscall(Process *proc, int sysnum) {
 }
 
 static void
+return_on_hit_cb(SymBreakpoint * self,
+		 Breakpoint * bp, Process * proc)
+{
+}
+
+static void
 callstack_push_symfunc(Process *proc, struct library_symbol *sym) {
 	struct callstack_element *elem, *prev;
 
@@ -719,7 +727,13 @@ callstack_push_symfunc(Process *proc, struct library_symbol *sym) {
 
 	elem->return_addr = proc->return_addr;
 	if (elem->return_addr) {
-		insert_breakpoint(proc, elem->return_addr, 0);
+		SymBreakpoint * symbp = create_symbp(NULL);
+		if (symbp == NULL) {
+			error(0, errno, "callstack_push_symfunc");
+			return;
+		}
+		symbp->on_hit_cb = return_on_hit_cb;
+		insert_breakpoint(proc, elem->return_addr, symbp);
 	}
 
 	/* handle functions like atexit() on mips which have no return */
