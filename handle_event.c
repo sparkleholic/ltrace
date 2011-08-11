@@ -30,9 +30,7 @@ static void handle_new(Event *event);
 static void remove_proc(Process *proc);
 
 static void callstack_push_syscall(Process *proc, int sysnum);
-static void callstack_push_symfunc(Process *proc,
-				   struct library_symbol *sym);
-static void callstack_pop(Process *proc);
+void callstack_pop(Process *proc);
 
 static char * shortsignal(Process *proc, int signum);
 static char * sysname(Process *proc, int sysnum);
@@ -435,7 +433,7 @@ handle_arch_syscall(Event *event) {
 
 struct timeval current_time_spent;
 
-static void
+void
 calc_time_spent(Process *proc) {
 	struct timeval tv;
 	struct timezone tz;
@@ -495,7 +493,6 @@ void *get_count_register (Process *proc);
 
 static void
 handle_breakpoint(Event *event) {
-	int i, j;
 	Breakpoint *sbp;
 
 	debug(DEBUG_FUNCTION, "handle_breakpoint(pid=%d, addr=%p)", event->proc->pid, event->e_un.brk_addr);
@@ -531,150 +528,28 @@ handle_breakpoint(Event *event) {
 		return;
 	}
 
-	int was_return_breakpoint = 0;
-	for (i = event->proc->callstack_depth - 1; i >= 0; i--) {
-		if (event->e_un.brk_addr ==
-		    event->proc->callstack[i].return_addr) {
-#ifdef __powerpc__
-			/*
-			 * PPC HACK! (XXX FIXME TODO)
-			 * The PLT gets modified during the first call,
-			 * so be sure to re-enable the breakpoint.
-			 */
-			unsigned long a;
-			struct library_symbol *libsym =
-			    event->proc->callstack[i].c_un.libfunc;
-			void *addr = sym2addr(event->proc, libsym);
-
-			if (libsym->plt_type != LS_TOPLT_POINT) {
-				unsigned char break_insn[] = BREAKPOINT_VALUE;
-
-				sbp = address2bpstruct(event->proc, addr);
-				assert(sbp);
-				a = ptrace(PTRACE_PEEKTEXT, event->proc->pid,
-					   addr);
-
-				if (memcmp(&a, break_insn, BREAKPOINT_LENGTH)) {
-					sbp->enabled--;
-					insert_breakpoint(event->proc, addr,
-							  libsym);
-				}
-			} else {
-				sbp = dict_find_entry(event->proc->breakpoints, addr);
-				/* On powerpc, the breakpoint address
-				   may end up being actual entry point
-				   of the library symbol, not the PLT
-				   address we computed.  In that case,
-				   sbp is NULL.  */
-				if (sbp == NULL || addr != sbp->addr) {
-					insert_breakpoint(event->proc, addr,
-							  libsym);
-				}
-			}
-#elif defined(__mips__)
-			void *addr = NULL;
-			struct library_symbol *sym= event->proc->callstack[i].c_un.libfunc;
-			struct library_symbol *new_sym;
-			assert(sym);
-			addr=sym2addr(event->proc,sym);
-			sbp = dict_find_entry(event->proc->breakpoints, addr);
-			if (sbp) {
-				if (addr != sbp->addr) {
-					insert_breakpoint(event->proc, addr, sym);
-				}
-			} else {
-				new_sym=malloc(sizeof(*new_sym) + strlen(sym->name) + 1);
-				memcpy(new_sym,sym,sizeof(*new_sym) + strlen(sym->name) + 1);
-				new_sym->next=event->proc->list_of_symbols;
-				event->proc->list_of_symbols=new_sym;
-				insert_breakpoint(event->proc, addr, new_sym);
-			}
-#endif
-			for (j = event->proc->callstack_depth - 1; j > i; j--) {
-				callstack_pop(event->proc);
-			}
-			if (event->proc->state != STATE_IGNORED) {
-				if (opt_T || options.summary) {
-					calc_time_spent(event->proc);
-				}
-			}
-			event->proc->return_addr = event->e_un.brk_addr;
-			if (event->proc->state != STATE_IGNORED) {
-				output_right(LT_TOF_FUNCTIONR, event->proc,
-						event->proc->callstack[i].c_un.libfunc->name);
-			}
-			callstack_pop(event->proc);
-			continue_after_breakpoint(event->proc,
-					address2bpstruct(event->proc,
-						event->e_un.brk_addr));
-			was_return_breakpoint = 1;
-		}
-	}
-
-	/* XXX This is a hack.  We would much rather have this done
-	 * with a series of SymBreakpoint callbacks.  */
-	if (event->proc->state != STATE_IGNORED
-	    && (sbp = address2bpstruct(event->proc, event->e_un.brk_addr))) {
-
+	int handled = 0;
+	sbp = address2bpstruct(event->proc, event->e_un.brk_addr);
+	if (sbp != NULL) {
 		SymBreakpoint * symbp;
 		for (symbp = sbp->symbps; symbp != NULL; symbp = symbp->next) {
-			if (symbp->libsym == NULL)
-				continue;
-
-			if (symbp->libsym->sym_type == LS_ST_PROBE) {
-				arg_type_info void_t = {
-					ARGTYPE_VOID
-				};
-				Function prot = {
-					.name = symbp->libsym->name,
-					.return_info = &void_t,
-					.num_params = 0,
-					.arg_info = {},
-					.params_right = 0,
-					.next = NULL
-				};
-				output_left_prot(LT_TOF_FUNCTION, event->proc,
-						 symbp->libsym->name, &prot);
-				output_right_prot(LT_TOF_FUNCTIONR, event->proc,
-						  symbp->libsym->name, &prot);
-			} else if (was_return_breakpoint) {
-				/* Skip the rest of the tests.  */
-			} else if (strcmp(symbp->libsym->name, "") == 0) {
-				debug(2, "Hit _dl_debug_state breakpoint!\n");
-				arch_check_dbg(event->proc);
-			} else {
-				void * sp;
-				event->proc->stack_pointer
-					= sp = get_stack_pointer(event->proc);
-				event->proc->return_addr =
-					get_return_addr(event->proc, sp);
-				callstack_push_symfunc(event->proc,
-						       symbp->libsym);
-				output_left(LT_TOF_FUNCTION, event->proc,
-					    symbp->libsym->name);
-
-#ifdef PLT_REINITALISATION_BP
-				if (event->proc->need_to_reinitialize_breakpoints
-				    && (strcmp(symbp->libsym->name,
-					       PLTs_initialized_by_here) == 0))
-					reinitialize_breakpoints(event->proc);
-#endif
+			if (symbp->on_hit_cb != NULL) {
+				symbp->on_hit_cb(symbp, sbp, event->proc);
+				handled = 1;
 			}
 		}
 	}
 
-	if (was_return_breakpoint)
-		return;
+	if (!handled) {
+		output_line(event->proc, "unexpected breakpoint at %p",
+			    (void *)event->e_un.brk_addr);
+	}
 
 	if (sbp != NULL) {
 		continue_after_breakpoint(event->proc, sbp);
 		return;
 	}
 
-	if (event->proc->state != STATE_IGNORED && !options.no_plt) {
-		output_line(event->proc, "unexpected breakpoint at %p",
-				(void *)event->e_un.brk_addr);
-	}
 	continue_process(event->proc->pid);
 }
 
@@ -702,50 +577,7 @@ callstack_push_syscall(Process *proc, int sysnum) {
 	}
 }
 
-static void
-return_on_hit_cb(SymBreakpoint * self,
-		 Breakpoint * bp, Process * proc)
-{
-}
-
-static void
-callstack_push_symfunc(Process *proc, struct library_symbol *sym) {
-	struct callstack_element *elem, *prev;
-
-	debug(DEBUG_FUNCTION, "callstack_push_symfunc(pid=%d, symbol=%s)", proc->pid, sym->name);
-	/* FIXME: not good -- should use dynamic allocation. 19990703 mortene. */
-	if (proc->callstack_depth == MAX_CALLDEPTH - 1) {
-		fprintf(stderr, "%s: Error: call nesting too deep!\n", __func__);
-		abort();
-		return;
-	}
-
-	prev = &proc->callstack[proc->callstack_depth-1];
-	elem = &proc->callstack[proc->callstack_depth];
-	elem->is_syscall = 0;
-	elem->c_un.libfunc = sym;
-
-	elem->return_addr = proc->return_addr;
-	if (elem->return_addr) {
-		SymBreakpoint * symbp = create_symbp(NULL);
-		if (symbp == NULL) {
-			error(0, errno, "callstack_push_symfunc");
-			return;
-		}
-		symbp->on_hit_cb = return_on_hit_cb;
-		insert_breakpoint(proc, elem->return_addr, symbp);
-	}
-
-	/* handle functions like atexit() on mips which have no return */
-	if (elem->return_addr != prev->return_addr)
-		proc->callstack_depth++;
-	if (opt_T || options.summary) {
-		struct timezone tz;
-		gettimeofday(&elem->time_spent, &tz);
-	}
-}
-
-static void
+void
 callstack_pop(Process *proc) {
 	struct callstack_element *elem;
 	assert(proc->callstack_depth > 0);

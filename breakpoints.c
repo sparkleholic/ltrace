@@ -242,6 +242,213 @@ free_bp_cb(void *addr, void *sbp, void *data) {
 	free(sbp);
 }
 
+struct return_reclev_t {
+	struct return_reclev_t * next;
+	int callstack_depth;
+};
+
+void callstack_pop(Process *proc);
+void calc_time_spent(Process *proc);
+
+static void
+return_on_hit_cb(SymBreakpoint * symbp,
+		 Breakpoint * bp, Process * proc)
+{
+	/* Unchain one recursion level.  */
+	struct return_reclev_t * reclev = symbp->data;
+	if (reclev == NULL)
+		return;
+	symbp->data = reclev->next;
+	/* XXX we need to remove the handler if this was the last
+	 * recursion level.  This should also eventually lead to
+	 * breakpoint removal.  */
+
+#ifdef __powerpc__
+			/*
+			 * PPC HACK! (XXX FIXME TODO)
+			 * The PLT gets modified during the first call,
+			 * so be sure to re-enable the breakpoint.
+			 */
+			unsigned long a;
+			struct library_symbol *libsym =
+			    event->proc->callstack[i].c_un.libfunc;
+			void *addr = sym2addr(event->proc, libsym);
+
+			if (libsym->plt_type != LS_TOPLT_POINT) {
+				unsigned char break_insn[] = BREAKPOINT_VALUE;
+
+				sbp = address2bpstruct(event->proc, addr);
+				assert(sbp);
+				a = ptrace(PTRACE_PEEKTEXT, event->proc->pid,
+					   addr);
+
+				if (memcmp(&a, break_insn, BREAKPOINT_LENGTH)) {
+					sbp->enabled--;
+					// XXX rewrite
+					insert_breakpoint(event->proc, addr,
+							  libsym);
+				}
+			} else {
+				sbp = dict_find_entry(event->proc->breakpoints, addr);
+				/* On powerpc, the breakpoint address
+				   may end up being actual entry point
+				   of the library symbol, not the PLT
+				   address we computed.  In that case,
+				   sbp is NULL.  */
+				if (sbp == NULL || addr != sbp->addr) {
+					// XXX rewrite
+					insert_breakpoint(event->proc, addr,
+							  libsym);
+				}
+			}
+#elif defined(__mips__)
+			void *addr = NULL;
+			struct library_symbol *sym= event->proc->callstack[i].c_un.libfunc;
+			struct library_symbol *new_sym;
+			assert(sym);
+			addr=sym2addr(event->proc,sym);
+			sbp = dict_find_entry(event->proc->breakpoints, addr);
+			if (sbp) {
+				if (addr != sbp->addr) {
+					// XXX rewrite
+					insert_breakpoint(event->proc, addr, sym);
+				}
+			} else {
+				new_sym=malloc(sizeof(*new_sym) + strlen(sym->name) + 1);
+				memcpy(new_sym,sym,sizeof(*new_sym) + strlen(sym->name) + 1);
+				new_sym->next=event->proc->list_of_symbols;
+				event->proc->list_of_symbols=new_sym;
+				// XXX rewrite
+				insert_breakpoint(event->proc, addr, new_sym);
+			}
+#endif
+
+	int callstack_depth = reclev->callstack_depth;
+	int j;
+	for (j = proc->callstack_depth - 1; j > callstack_depth; j--) {
+		/* XXX we also need to unchain relevant breakpoint
+		 * handler levels.  */
+		callstack_pop(proc);
+	}
+
+	proc->return_addr = bp->addr;
+
+	if (proc->state != STATE_IGNORED) {
+		if (opt_T || options.summary)
+			calc_time_spent(proc);
+
+		struct library_symbol * libsym
+			= proc->callstack[callstack_depth].c_un.libfunc;
+		output_right(LT_TOF_FUNCTIONR, proc, libsym->name);
+	}
+
+	callstack_pop(proc);
+}
+
+static SymBreakpoint *
+lookup_return_symbp(Breakpoint * bp)
+{
+	SymBreakpoint * symbp;
+	if (bp != NULL)
+		for (symbp = bp->symbps; symbp != NULL;
+		     symbp = symbp->next)
+			if (symbp->on_hit_cb == return_on_hit_cb)
+				return symbp;
+	return NULL;
+}
+
+static void
+callstack_push_symfunc(Process *proc, struct library_symbol *sym)
+{
+	struct callstack_element *elem, *prev;
+
+	debug(DEBUG_FUNCTION, "callstack_push_symfunc(pid=%d, symbol=%s)", proc->pid, sym->name);
+	/* FIXME: not good -- should use dynamic allocation. 19990703 mortene. */
+	if (proc->callstack_depth == MAX_CALLDEPTH - 1) {
+		fprintf(stderr, "%s: Error: call nesting too deep!\n", __func__);
+		abort();
+		return;
+	}
+
+	prev = &proc->callstack[proc->callstack_depth-1];
+	elem = &proc->callstack[proc->callstack_depth];
+
+	/* Handle functions like atexit() on mips which have no
+	 * return.  */
+	if (elem->return_addr == prev->return_addr
+	    || proc->return_addr == NULL)
+		return;
+
+	elem->is_syscall = 0;
+	elem->return_addr = proc->return_addr;
+	elem->c_un.libfunc = sym;
+
+	/* Look for preexisting return handler.  */
+	Breakpoint * bp = address2bpstruct(proc, elem->return_addr);
+	SymBreakpoint * symbp = lookup_return_symbp(bp);
+
+	/* Create new return handler if there's no other.  */
+	if (symbp == NULL) {
+		symbp = create_symbp(NULL);
+		if (symbp == NULL) {
+			error(0, errno, "callstack_push_symfunc");
+			return;
+		}
+		symbp->on_hit_cb = return_on_hit_cb;
+		insert_breakpoint(proc, elem->return_addr, symbp);
+	}
+
+	/* Chain on the new recursion level.  */
+	struct return_reclev_t * reclev = malloc(sizeof(*reclev));
+	reclev->callstack_depth = proc->callstack_depth;
+	reclev->next = symbp->data;
+	symbp->data = reclev;
+
+	proc->callstack_depth++;
+
+	if (opt_T || options.summary) {
+		struct timezone tz;
+		gettimeofday(&elem->time_spent, &tz);
+	}
+}
+
+static void
+pltbp_on_hit_cb(SymBreakpoint * symbp, Breakpoint * bp, Process * proc)
+{
+	if (proc->state == STATE_IGNORED)
+		return;
+
+	void * sp;
+	proc->stack_pointer = sp = get_stack_pointer(proc);
+	proc->return_addr = get_return_addr(proc, sp);
+	callstack_push_symfunc(proc, symbp->libsym);
+	output_left(LT_TOF_FUNCTION, proc, symbp->libsym->name);
+
+#ifdef PLT_REINITALISATION_BP
+	if (proc->need_to_reinitialize_breakpoints
+	    && (strcmp(symbp->libsym->name, PLTs_initialized_by_here) == 0))
+		reinitialize_breakpoints(event->proc);
+#endif
+}
+
+static void
+probe_on_hit_cb(SymBreakpoint * symbp, Breakpoint * bp, Process * proc)
+{
+	arg_type_info void_t = {
+		ARGTYPE_VOID
+	};
+	Function prot = {
+		.name = symbp->libsym->name,
+		.return_info = &void_t,
+		.num_params = 0,
+		.arg_info = {},
+		.params_right = 0,
+		.next = NULL
+	};
+	output_left_prot(LT_TOF_FUNCTION, proc, symbp->libsym->name, &prot);
+	output_right_prot(LT_TOF_FUNCTIONR, proc, symbp->libsym->name, &prot);
+}
+
 void
 breakpoints_init(Process *proc) {
 	struct library_symbol *sym;
@@ -285,6 +492,14 @@ breakpoints_init(Process *proc) {
 		if (symbp == NULL) {
 			error(0, errno, "breakpoints_init");
 			continue;
+		}
+		switch (sym->sym_type) {
+		case LS_ST_FUNCTION:
+			symbp->on_hit_cb = pltbp_on_hit_cb;
+			break;
+		case LS_ST_PROBE:
+			symbp->on_hit_cb = probe_on_hit_cb;
+			break;
 		}
 		insert_breakpoint(proc, sym2addr(proc, sym), symbp);
 	}

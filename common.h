@@ -31,6 +31,7 @@ typedef struct SymBreakpoint SymBreakpoint;
 struct SymBreakpoint {
 	SymBreakpoint * next;
 	struct library_symbol * libsym;
+	void * data;
 
 	/* Called when the breakpoint is hit.  */
 	void (* on_hit_cb) (SymBreakpoint * self,
