@@ -304,7 +304,7 @@ extern void * get_stack_pointer(Process * proc);
 extern void * get_return_addr(Process * proc, void * stack_pointer);
 extern void set_return_addr(Process * proc, void * addr);
 extern void enable_breakpoint(Process * proc, Breakpoint * sbp);
-extern void disable_breakpoint(Process * proc, const Breakpoint * sbp);
+extern void disable_breakpoint(Process * proc, Breakpoint * sbp);
 extern int syscall_p(Process * proc, int status, int * sysnum);
 extern void continue_process(pid_t pid);
 extern void continue_after_signal(pid_t pid, int signum);

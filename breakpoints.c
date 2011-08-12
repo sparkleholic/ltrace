@@ -513,6 +513,36 @@ probe_on_hit_cb(SymBreakpoint * symbp, Breakpoint * bp, Process * proc)
 	output_right_prot(LT_TOF_FUNCTIONR, proc, symbp->libsym->name, &prot);
 }
 
+static void
+probe_on_enable_cb(SymBreakpoint * symbp, Breakpoint * bp, Process * proc)
+{
+	/* Bump the probe semaphore.  */
+	struct library_symbol * libsym = symbp->libsym;
+	if (libsym != NULL
+	    && libsym->sym_type == LS_ST_PROBE
+	    && libsym->st_probe.sema != 0) {
+		uint16_t sema = 0;
+		umovebytes(proc, libsym->st_probe.sema, &sema, sizeof(sema));
+		++sema;
+		ustorebytes(proc, libsym->st_probe.sema, &sema, sizeof(sema));
+	}
+}
+
+static void
+probe_on_disable_cb(SymBreakpoint * symbp, Breakpoint * bp, Process * proc)
+{
+	/* Decrease the probe semaphore.  */
+	struct library_symbol * libsym = symbp->libsym;
+	if (libsym != NULL
+	    && libsym->sym_type == LS_ST_PROBE
+	    && libsym->st_probe.sema != 0) {
+		uint16_t sema = 1;
+		umovebytes(proc, libsym->st_probe.sema, &sema, sizeof(sema));
+		--sema;
+		ustorebytes(proc, libsym->st_probe.sema, &sema, sizeof(sema));
+	}
+}
+
 void
 breakpoints_init(Process *proc) {
 	struct library_symbol *sym;
@@ -563,6 +593,8 @@ breakpoints_init(Process *proc) {
 			break;
 		case LS_ST_PROBE:
 			symbp->on_hit_cb = probe_on_hit_cb;
+			symbp->on_enable_cb = probe_on_enable_cb;
+			symbp->on_disable_cb = probe_on_disable_cb;
 			break;
 		}
 		insert_breakpoint(proc, sym2addr(proc, sym), symbp);

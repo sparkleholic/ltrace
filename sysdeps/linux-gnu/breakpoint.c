@@ -42,21 +42,14 @@ enable_breakpoint(Process * proc, Breakpoint *sbp) {
 	      proc->pid, sbp->addr, breakpoint_name(sbp));
 	arch_enable_breakpoint(proc->pid, sbp);
 
-	/* When using probe symbols, we need to bump the
-	 * semaphore.  */
-	SymBreakpoint * symbp = sbp->symbps;
-	for (; symbp != NULL; symbp = symbp->next) {
-		struct library_symbol * libsym = symbp->libsym;
-		if (libsym != NULL
-		    && libsym->sym_type == LS_ST_PROBE
-		    && libsym->st_probe.sema != 0) {
-			uint16_t sema = 0;
-			umovebytes(proc, libsym->st_probe.sema,
-				   &sema, sizeof(sema));
-			++sema;
-			ustorebytes(proc, libsym->st_probe.sema,
-				    &sema, sizeof(sema));
-		}
+	/* Call event handlers.  */
+	SymBreakpoint * symbp;
+	for (symbp = sbp->symbps; symbp != NULL; ) {
+		/* Protect against removal during on_hit.  */
+		SymBreakpoint * next = symbp->next;
+		if (symbp->on_enable_cb != NULL)
+			symbp->on_enable_cb(symbp, sbp, proc);
+		symbp = next;
 	}
 }
 
@@ -86,25 +79,18 @@ arch_disable_breakpoint(pid_t pid, const Breakpoint *sbp) {
 #endif				/* ARCH_HAVE_DISABLE_BREAKPOINT */
 
 void
-disable_breakpoint(Process * proc, const Breakpoint *sbp) {
+disable_breakpoint(Process * proc, Breakpoint *sbp) {
 	debug(DEBUG_PROCESS, "disable_breakpoint: pid=%d, addr=%p, symbol=%s",
 	      proc->pid, sbp->addr, breakpoint_name(sbp));
 	arch_disable_breakpoint(proc->pid, sbp);
 
-	/* When using probe symbols, we need to decrease the
-	 * semaphore again.  */
-	SymBreakpoint * symbp = sbp->symbps;
-	for (; symbp != NULL; symbp = symbp->next) {
-		struct library_symbol * libsym = symbp->libsym;
-		if (libsym != NULL
-		    && libsym->sym_type == LS_ST_PROBE
-		    && libsym->st_probe.sema != 0) {
-			uint16_t sema = 1;
-			umovebytes(proc, libsym->st_probe.sema,
-				   &sema, sizeof(sema));
-			--sema;
-			ustorebytes(proc, libsym->st_probe.sema,
-				    &sema, sizeof(sema));
-		}
+	/* Call event handlers.  */
+	SymBreakpoint * symbp;
+	for (symbp = sbp->symbps; symbp != NULL; ) {
+		/* Protect against removal during on_hit.  */
+		SymBreakpoint * next = symbp->next;
+		if (symbp->on_enable_cb != NULL)
+			symbp->on_disable_cb(symbp, sbp, proc);
+		symbp = next;
 	}
 }
