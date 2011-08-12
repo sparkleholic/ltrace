@@ -8,20 +8,13 @@
 #include "common.h"
 #include "arch.h"
 
-#ifdef ARCH_HAVE_ENABLE_BREAKPOINT
-extern void arch_enable_breakpoint(pid_t, Breakpoint *);
-void
-enable_breakpoint(pid_t pid, Breakpoint *sbp) {
-	debug(DEBUG_PROCESS, "enable_breakpoint: pid=%d, addr=%p, symbol=%s",
-	      pid, sbp->addr, breakpoint_name(sbp));
-	arch_enable_breakpoint(pid, sbp);
-}
-#else
-
 static unsigned char break_insn[] = BREAKPOINT_VALUE;
 
+#ifdef ARCH_HAVE_ENABLE_BREAKPOINT
+extern void arch_enable_breakpoint(pid_t, Breakpoint *);
+#else				/* ARCH_HAVE_ENABLE_BREAKPOINT */
 void
-enable_breakpoint(pid_t pid, Breakpoint *sbp) {
+arch_enable_breakpoint(pid_t pid, Breakpoint *sbp) {
 	unsigned int i, j;
 
 	debug(DEBUG_PROCESS, "enable_breakpoint: pid=%d, addr=%p, symbol=%s",
@@ -40,6 +33,14 @@ enable_breakpoint(pid_t pid, Breakpoint *sbp) {
 		}
 		ptrace(PTRACE_POKETEXT, pid, sbp->addr + i * sizeof(long), a);
 	}
+}
+#endif				/* ARCH_HAVE_ENABLE_BREAKPOINT */
+
+void
+enable_breakpoint(Process * proc, Breakpoint *sbp) {
+	debug(DEBUG_PROCESS, "enable_breakpoint: pid=%d, addr=%p, symbol=%s",
+	      proc->pid, sbp->addr, breakpoint_name(sbp));
+	arch_enable_breakpoint(proc->pid, sbp);
 
 	/* When using probe symbols, we need to bump the
 	 * semaphore.  */
@@ -49,7 +50,6 @@ enable_breakpoint(pid_t pid, Breakpoint *sbp) {
 		if (libsym != NULL
 		    && libsym->sym_type == LS_ST_PROBE
 		    && libsym->st_probe.sema != 0) {
-			Process * proc = pid2proc(pid);
 			uint16_t sema = 0;
 			umovebytes(proc, libsym->st_probe.sema,
 				   &sema, sizeof(sema));
@@ -59,19 +59,12 @@ enable_breakpoint(pid_t pid, Breakpoint *sbp) {
 		}
 	}
 }
-#endif				/* ARCH_HAVE_ENABLE_BREAKPOINT */
 
 #ifdef ARCH_HAVE_DISABLE_BREAKPOINT
 extern void arch_disable_breakpoint(pid_t, const Breakpoint *sbp);
+#else				/* ARCH_HAVE_DISABLE_BREAKPOINT */
 void
-disable_breakpoint(pid_t pid, const Breakpoint *sbp) {
-	debug(DEBUG_PROCESS, "disable_breakpoint: pid=%d, addr=%p, symbol=%s",
-	      pid, sbp->addr, breakpoint_name(sbp));
-	arch_disable_breakpoint(pid, sbp);
-}
-#else
-void
-disable_breakpoint(pid_t pid, const Breakpoint *sbp) {
+arch_disable_breakpoint(pid_t pid, const Breakpoint *sbp) {
 	unsigned int i, j;
 
 	debug(DEBUG_PROCESS, "disable_breakpoint: pid=%d, addr=%p, symbol=%s",
@@ -89,6 +82,14 @@ disable_breakpoint(pid_t pid, const Breakpoint *sbp) {
 		}
 		ptrace(PTRACE_POKETEXT, pid, sbp->addr + i * sizeof(long), a);
 	}
+}
+#endif				/* ARCH_HAVE_DISABLE_BREAKPOINT */
+
+void
+disable_breakpoint(Process * proc, const Breakpoint *sbp) {
+	debug(DEBUG_PROCESS, "disable_breakpoint: pid=%d, addr=%p, symbol=%s",
+	      proc->pid, sbp->addr, breakpoint_name(sbp));
+	arch_disable_breakpoint(proc->pid, sbp);
 
 	/* When using probe symbols, we need to decrease the
 	 * semaphore again.  */
@@ -98,7 +99,6 @@ disable_breakpoint(pid_t pid, const Breakpoint *sbp) {
 		if (libsym != NULL
 		    && libsym->sym_type == LS_ST_PROBE
 		    && libsym->st_probe.sema != 0) {
-			Process * proc = pid2proc(pid);
 			uint16_t sema = 1;
 			umovebytes(proc, libsym->st_probe.sema,
 				   &sema, sizeof(sema));
@@ -108,4 +108,3 @@ disable_breakpoint(pid_t pid, const Breakpoint *sbp) {
 		}
 	}
 }
-#endif				/* ARCH_HAVE_DISABLE_BREAKPOINT */

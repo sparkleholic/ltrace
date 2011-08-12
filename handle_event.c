@@ -197,7 +197,7 @@ handle_clone(Event * event) {
 	if (pending_new(p->pid)) {
 		pending_new_remove(p->pid);
 		if (p->breakpoint_being_enabled) {
-			enable_breakpoint(p->pid, p->breakpoint_being_enabled);
+			enable_breakpoint(p, p->breakpoint_being_enabled);
 			p->breakpoint_being_enabled = NULL;
 		}
 		if (event->proc->state == STATE_ATTACHED && options.follow) {
@@ -228,7 +228,7 @@ handle_new(Event * event) {
 	} else {
 		assert(proc->state == STATE_BEING_CREATED);
 		if (proc->breakpoint_being_enabled) {
-			enable_breakpoint(proc->pid, proc->breakpoint_being_enabled);
+			enable_breakpoint(proc, proc->breakpoint_being_enabled);
 			proc->breakpoint_being_enabled = NULL;
 		}
 		if (options.follow) {
@@ -521,9 +521,7 @@ handle_breakpoint(Event *event) {
 #endif
 	if ((sbp = event->proc->breakpoint_being_enabled) != 0) {
 		/* Reinsert breakpoint */
-		continue_enabling_breakpoint(event->proc->pid,
-					     event->proc->
-					     breakpoint_being_enabled);
+		continue_enabling_breakpoint(event->proc, sbp);
 		event->proc->breakpoint_being_enabled = NULL;
 		return;
 	}
