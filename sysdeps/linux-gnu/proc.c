@@ -191,7 +191,8 @@ linkmap_add_cb(void *data) { //const char *lib_name, ElfW(Addr) addr) {
 				addr = sym.st_value;
 				add_library_symbol(addr, xptr->name, &library_symbols, LS_TOPLT_NONE, 0);
 				xptr->found = 1;
-				symbp = create_symbp(library_symbols);
+				/* XXX need proper callbacks.  */
+				symbp = create_symbp(library_symbols, NULL);
 				bp_addr = sym2addr(lm_add->proc,
 						   library_symbols);
 				insert_breakpoint(lm_add->proc, bp_addr, symbp);
@@ -303,10 +304,12 @@ linkmap_init(Process *proc, struct ltelf *lte) {
 		return -1;
 	}
 
-	symbp = create_symbp(libsym);
+	static SymBreakpoint_Callbacks linkmap_symbp_callbacks = {
+		.on_hit_cb = linkmap_on_hit_cb
+	};
+	symbp = create_symbp(libsym, &linkmap_symbp_callbacks);
 	if (symbp == NULL)
 		goto memerr;
-	symbp->on_hit_cb = linkmap_on_hit_cb;
 
 	insert_breakpoint(proc, sym2addr(proc, libsym), symbp);
 

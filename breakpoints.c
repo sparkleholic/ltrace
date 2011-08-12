@@ -70,13 +70,6 @@ insert_breakpoint(Process *proc, void *addr, SymBreakpoint * symbp) {
 		enable_breakpoint(proc, sbp);
 }
 
-static void
-release_sympb(SymBreakpoint * symbp) {
-	if (symbp->destroy != NULL)
-		symbp->destroy(symbp);
-	free(symbp);
-}
-
 void
 delete_breakpoint(Process *proc, void *addr) {
 	Breakpoint *sbp;
@@ -93,7 +86,7 @@ delete_breakpoint(Process *proc, void *addr) {
 	while (sbp->symbps != NULL) {
 		SymBreakpoint * tmp = sbp->symbps;
 		sbp->symbps = tmp->next;
-		release_sympb(tmp);
+		sympb_destroy(tmp);
 	}
 	*/
 
@@ -120,12 +113,14 @@ breakpoint_name(const Breakpoint * bp)
 }
 
 SymBreakpoint *
-create_symbp(struct library_symbol * libsym)
+create_symbp(struct library_symbol * libsym,
+	     const SymBreakpoint_Callbacks * cbs)
 {
 	SymBreakpoint * symbp = calloc(1, sizeof(*symbp));
 	if (symbp == NULL)
 		return NULL;
 	symbp->libsym = libsym;
+	symbp->cbs = cbs;
 	return symbp;
 }
 
@@ -136,7 +131,7 @@ delete_symbp(Process * proc, Breakpoint * bp, SymBreakpoint * symbp)
 	for (it = *nextp; it != NULL; it = *(nextp = &it->next)) {
 		if (it == symbp) {
 			*nextp = it->next;
-			release_sympb(it);
+			symbp_destroy(it);
 			/*
 			if (bp->symbps == NULL) {
 				printf("last handler gone, deleting %p\n", bp->addr);
@@ -381,6 +376,10 @@ return_on_hit_cb(SymBreakpoint * symbp,
 	callstack_pop(proc);
 }
 
+static SymBreakpoint_Callbacks return_symbp_callbacks = {
+	.on_hit_cb = return_on_hit_cb
+};
+
 static SymBreakpoint *
 lookup_return_symbp(Breakpoint * bp)
 {
@@ -388,7 +387,7 @@ lookup_return_symbp(Breakpoint * bp)
 	if (bp != NULL)
 		for (symbp = bp->symbps; symbp != NULL;
 		     symbp = symbp->next)
-			if (symbp->on_hit_cb == return_on_hit_cb)
+			if (symbp->cbs == &return_symbp_callbacks)
 				return symbp;
 	return NULL;
 }
@@ -424,12 +423,11 @@ callstack_push_symfunc(Process *proc, struct library_symbol *sym)
 
 	/* Create new return handler if there's no other.  */
 	if (symbp == NULL) {
-		symbp = create_symbp(sym);
+		symbp = create_symbp(sym, &return_symbp_callbacks);
 		if (symbp == NULL) {
 			error(0, errno, "callstack_push_symfunc");
 			return;
 		}
-		symbp->on_hit_cb = return_on_hit_cb;
 		insert_breakpoint(proc, elem->return_addr, symbp);
 	}
 	elem->c_un.symbp = symbp;
@@ -543,6 +541,49 @@ probe_on_disable_cb(SymBreakpoint * symbp, Breakpoint * bp, Process * proc)
 	}
 }
 
+static void
+probe_destroy(SymBreakpoint * symbp)
+{
+	while (symbp->data != NULL) {
+		struct return_reclev_t * reclev = symbp->data;
+		symbp->data = reclev->next;
+		free(reclev);
+	}
+}
+
+static void *
+probe_copy_data(SymBreakpoint * symbp)
+{
+	struct return_reclev_t * copy = NULL;
+	struct return_reclev_t * it;
+	for (it = symbp->data; it != NULL; it = it->next) {
+		struct return_reclev_t * tmp = malloc(sizeof(*tmp));
+		if (tmp == NULL) {
+			error(0, errno, "probe_copy_data");
+			for (tmp = copy; tmp != NULL; ) {
+				it = tmp->next;
+				free(tmp);
+				tmp = it;
+			}
+			return NULL;
+		}
+		memcpy(tmp, it, sizeof(*tmp));
+		tmp->next = copy;
+		copy = tmp;
+	}
+
+	for (it = copy; it != NULL; it = it->next) {
+		struct return_reclev_t * next = it->next;
+		if (next != NULL)
+			next->next = it;
+		else
+			copy = it;
+		it = next;
+	}
+
+	return copy;
+}
+
 void
 breakpoints_init(Process *proc) {
 	struct library_symbol *sym;
@@ -581,21 +622,29 @@ breakpoints_init(Process *proc) {
 		proc->list_of_symbols = NULL;
 	}
 	for (sym = proc->list_of_symbols; sym; sym = sym->next) {
-		/* proc->pid==0 delays enabling. */
-		SymBreakpoint * symbp = create_symbp(sym);
+		static SymBreakpoint_Callbacks pltbp_symbp_callbacks = {
+			.on_hit_cb = pltbp_on_hit_cb
+		};
+		static SymBreakpoint_Callbacks probe_symbp_callbacks = {
+			.on_hit_cb = probe_on_hit_cb,
+			.on_enable_cb = probe_on_enable_cb,
+			.on_disable_cb = probe_on_disable_cb,
+			.destroy = probe_destroy,
+			.copy_data = probe_copy_data
+		};
+		SymBreakpoint_Callbacks * cbs = NULL;
+		switch (sym->sym_type) {
+		case LS_ST_FUNCTION:
+			cbs = &pltbp_symbp_callbacks;
+			break;
+		case LS_ST_PROBE:
+			cbs = &probe_symbp_callbacks;
+			break;
+		}
+		SymBreakpoint * symbp = create_symbp(sym, cbs);
 		if (symbp == NULL) {
 			error(0, errno, "breakpoints_init");
 			continue;
-		}
-		switch (sym->sym_type) {
-		case LS_ST_FUNCTION:
-			symbp->on_hit_cb = pltbp_on_hit_cb;
-			break;
-		case LS_ST_PROBE:
-			symbp->on_hit_cb = probe_on_hit_cb;
-			symbp->on_enable_cb = probe_on_enable_cb;
-			symbp->on_disable_cb = probe_on_disable_cb;
-			break;
 		}
 		insert_breakpoint(proc, sym2addr(proc, sym), symbp);
 	}
@@ -630,4 +679,42 @@ reinitialize_breakpoints(Process *proc) {
 		sym = sym->next;
 	}
 #endif
+}
+
+void
+symbp_on_hit(SymBreakpoint * self, Breakpoint * bp, Process * proc)
+{
+	if (self->cbs != NULL && self->cbs->on_hit_cb != NULL)
+		self->cbs->on_hit_cb(self, bp, proc);
+}
+
+void
+symbp_on_enable(SymBreakpoint * self, Breakpoint * bp, Process * proc)
+{
+	if (self->cbs != NULL && self->cbs->on_enable_cb != NULL)
+		self->cbs->on_enable_cb(self, bp, proc);
+}
+
+void
+symbp_on_disable(SymBreakpoint * self, Breakpoint * bp, Process * proc)
+{
+	if (self->cbs != NULL && self->cbs->on_disable_cb != NULL)
+		self->cbs->on_disable_cb(self, bp, proc);
+}
+
+void
+symbp_destroy(SymBreakpoint * self)
+{
+	if (self->cbs != NULL && self->cbs->destroy != NULL)
+		self->cbs->destroy(self);
+	free(self);
+}
+
+void *
+symbp_copy_data(SymBreakpoint * self)
+{
+	if (self->cbs != NULL && self->cbs->copy_data != NULL)
+		return self->cbs->copy_data(self);
+	else
+		return self->data;
 }

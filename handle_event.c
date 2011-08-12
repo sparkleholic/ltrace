@@ -526,24 +526,15 @@ handle_breakpoint(Event *event) {
 		return;
 	}
 
-	int handled = 0;
 	sbp = address2bpstruct(event->proc, event->e_un.brk_addr);
 	if (sbp != NULL) {
 		SymBreakpoint * symbp;
 		for (symbp = sbp->symbps; symbp != NULL; ) {
 			/* Protect against removal during on_hit.  */
 			SymBreakpoint * next = symbp->next;
-			if (symbp->on_hit_cb != NULL) {
-				symbp->on_hit_cb(symbp, sbp, event->proc);
-				handled = 1;
-			}
+			symbp_on_hit(symbp, sbp, event->proc);
 			symbp = next;
 		}
-	}
-
-	if (!handled) {
-		output_line(event->proc, "unexpected breakpoint at %p",
-			    (void *)event->e_un.brk_addr);
 	}
 
 	if (sbp != NULL) {
@@ -551,6 +542,8 @@ handle_breakpoint(Event *event) {
 		return;
 	}
 
+	output_line(event->proc, "unexpected breakpoint at %p",
+		    (void *)event->e_un.brk_addr);
 	continue_process(event->proc->pid);
 }
 

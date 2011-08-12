@@ -28,12 +28,9 @@ extern int exiting;  /* =1 if we have to exit ASAP */
  * address.  */
 typedef struct Breakpoint Breakpoint;
 typedef struct SymBreakpoint SymBreakpoint;
+typedef struct SymBreakpoint_Callbacks SymBreakpoint_Callbacks;
 
-struct SymBreakpoint {
-	SymBreakpoint * next;
-	struct library_symbol * libsym;
-	void * data;
-
+struct SymBreakpoint_Callbacks {
 	/* Called when the breakpoint is hit.  */
 	void (* on_hit_cb) (SymBreakpoint * self,
 			    Breakpoint * bp, Process * proc);
@@ -48,6 +45,31 @@ struct SymBreakpoint {
 
 	/* If non-NULL, called when breakpoint is completely removed.  */
 	void (* destroy) (SymBreakpoint * self);
+
+	/* If non-NULL, called when SymBreakpoint is cloned.  It
+	   should return a clone of the SELF->data pointer.  */
+	void * (* copy_data) (SymBreakpoint * self);
+};
+
+extern void symbp_on_hit(SymBreakpoint * self,
+			 Breakpoint * bp, Process * proc);
+
+extern void symbp_on_enable(SymBreakpoint * self,
+			    Breakpoint * bp, Process * proc);
+
+extern void symbp_on_disable(SymBreakpoint * self,
+			     Breakpoint * bp, Process * proc);
+
+extern void symbp_destroy(SymBreakpoint * self);
+
+extern void * symbp_copy_data(SymBreakpoint * self);
+
+
+struct SymBreakpoint {
+	SymBreakpoint * next;
+	struct library_symbol * libsym;
+	const SymBreakpoint_Callbacks * cbs;
+	void * data;
 };
 
 struct Breakpoint {
@@ -270,8 +292,10 @@ extern void insert_breakpoint(Process * proc, void * addr, SymBreakpoint * symbp
 extern void delete_breakpoint(Process * proc, void * addr);
 extern Breakpoint * clone_breakpoint(const Breakpoint * bp);
 extern const char * breakpoint_name(const Breakpoint * bp);
-extern SymBreakpoint * create_symbp(struct library_symbol * libsym);
+extern SymBreakpoint * create_symbp(struct library_symbol * libsym,
+				    const SymBreakpoint_Callbacks * cbs);
 extern void delete_symbp(Process * proc, Breakpoint * bp, SymBreakpoint * symbp);
+
 
 extern void enable_all_breakpoints(Process * proc);
 extern void disable_all_breakpoints(Process * proc);

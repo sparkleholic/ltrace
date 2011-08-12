@@ -47,8 +47,7 @@ enable_breakpoint(Process * proc, Breakpoint *sbp) {
 	for (symbp = sbp->symbps; symbp != NULL; ) {
 		/* Protect against removal during on_hit.  */
 		SymBreakpoint * next = symbp->next;
-		if (symbp->on_enable_cb != NULL)
-			symbp->on_enable_cb(symbp, sbp, proc);
+		symbp_on_enable(symbp, sbp, proc);
 		symbp = next;
 	}
 }
@@ -89,8 +88,7 @@ disable_breakpoint(Process * proc, Breakpoint *sbp) {
 	for (symbp = sbp->symbps; symbp != NULL; ) {
 		/* Protect against removal during on_hit.  */
 		SymBreakpoint * next = symbp->next;
-		if (symbp->on_enable_cb != NULL)
-			symbp->on_disable_cb(symbp, sbp, proc);
+		symbp_on_disable(symbp, sbp, proc);
 		symbp = next;
 	}
 }
