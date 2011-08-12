@@ -20,6 +20,10 @@
 	* output.c, output.h (output_left_prot, output_right_prot): New
 	functions.  Meat of output_* moved here, output_* became wrappers.
 
+2011-05-09  Petr Machata  <pmachata@redhat.com>
+
+	* common.h (struct Process): Drop field type_being_displayed.
+
 2011-02-16  Petr Machata  <pmachata@redhat.com>
 
 	* etc/ltrace.conf: Add memmove.
