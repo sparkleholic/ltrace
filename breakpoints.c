@@ -70,6 +70,13 @@ insert_breakpoint(Process *proc, void *addr, SymBreakpoint * symbp) {
 		enable_breakpoint(proc->pid, sbp);
 }
 
+static void
+release_sympb(SymBreakpoint * symbp) {
+	if (symbp->destroy != NULL)
+		symbp->destroy(symbp);
+	free(symbp);
+}
+
 void
 delete_breakpoint(Process *proc, void *addr) {
 	Breakpoint *sbp;
@@ -82,7 +89,16 @@ delete_breakpoint(Process *proc, void *addr) {
 	if (sbp == NULL)
 		return;
 
+	/*
+	while (sbp->symbps != NULL) {
+		SymBreakpoint * tmp = sbp->symbps;
+		sbp->symbps = tmp->next;
+		release_sympb(tmp);
+	}
+	*/
+
 	sbp->enabled--;
+	printf("delete_breakpoint %p %d\n", sbp->addr, sbp->enabled);
 	if (sbp->enabled == 0)
 		disable_breakpoint(proc->pid, sbp);
 	assert(sbp->enabled >= 0);
@@ -103,7 +119,7 @@ breakpoint_name(const Breakpoint * bp)
 	return "(??""?)";
 }
 
-extern SymBreakpoint *
+SymBreakpoint *
 create_symbp(struct library_symbol * libsym)
 {
 	SymBreakpoint * symbp = calloc(1, sizeof(*symbp));
@@ -111,6 +127,26 @@ create_symbp(struct library_symbol * libsym)
 		return NULL;
 	symbp->libsym = libsym;
 	return symbp;
+}
+
+void
+delete_symbp(Process * proc, Breakpoint * bp, SymBreakpoint * symbp)
+{
+	SymBreakpoint * it, ** nextp = &bp->symbps;
+	for (it = *nextp; it != NULL; it = *(nextp = &it->next)) {
+		if (it == symbp) {
+			*nextp = it->next;
+			release_sympb(it);
+			/*
+			if (bp->symbps == NULL) {
+				printf("last handler gone, deleting %p\n", bp->addr);
+				delete_breakpoint(proc, bp->addr);
+			}
+			*/
+			return;
+		}
+	}
+	assert(0);
 }
 
 Breakpoint *
@@ -254,11 +290,10 @@ static void
 return_on_hit_cb(SymBreakpoint * symbp,
 		 Breakpoint * bp, Process * proc)
 {
-	/* Unchain one recursion level.  */
-	struct return_reclev_t * reclev = symbp->data;
-	if (reclev == NULL)
+	/* symbp->data contains recursion levels.  */
+	if (symbp->data == NULL)
 		return;
-	symbp->data = reclev->next;
+
 	/* XXX we need to remove the handler if this was the last
 	 * recursion level.  This should also eventually lead to
 	 * breakpoint removal.  */
@@ -323,6 +358,7 @@ return_on_hit_cb(SymBreakpoint * symbp,
 			}
 #endif
 
+	struct return_reclev_t * reclev = symbp->data;
 	int callstack_depth = reclev->callstack_depth;
 	int j;
 	for (j = proc->callstack_depth - 1; j > callstack_depth; j--) {
@@ -338,7 +374,7 @@ return_on_hit_cb(SymBreakpoint * symbp,
 			calc_time_spent(proc);
 
 		struct library_symbol * libsym
-			= proc->callstack[callstack_depth].c_un.libfunc;
+			= proc->callstack[callstack_depth].c_un.symbp->libsym;
 		output_right(LT_TOF_FUNCTIONR, proc, libsym->name);
 	}
 
@@ -381,15 +417,14 @@ callstack_push_symfunc(Process *proc, struct library_symbol *sym)
 
 	elem->is_syscall = 0;
 	elem->return_addr = proc->return_addr;
-	elem->c_un.libfunc = sym;
 
-	/* Look for preexisting return handler.  */
+	/* Look for preexisting breakpoint.  */
 	Breakpoint * bp = address2bpstruct(proc, elem->return_addr);
 	SymBreakpoint * symbp = lookup_return_symbp(bp);
 
 	/* Create new return handler if there's no other.  */
 	if (symbp == NULL) {
-		symbp = create_symbp(NULL);
+		symbp = create_symbp(sym);
 		if (symbp == NULL) {
 			error(0, errno, "callstack_push_symfunc");
 			return;
@@ -397,6 +432,7 @@ callstack_push_symfunc(Process *proc, struct library_symbol *sym)
 		symbp->on_hit_cb = return_on_hit_cb;
 		insert_breakpoint(proc, elem->return_addr, symbp);
 	}
+	elem->c_un.symbp = symbp;
 
 	/* Chain on the new recursion level.  */
 	struct return_reclev_t * reclev = malloc(sizeof(*reclev));
@@ -410,6 +446,34 @@ callstack_push_symfunc(Process *proc, struct library_symbol *sym)
 		struct timezone tz;
 		gettimeofday(&elem->time_spent, &tz);
 	}
+}
+
+void
+callstack_pop(Process *proc) {
+	struct callstack_element *elem;
+	assert(proc->callstack_depth > 0);
+
+	debug(DEBUG_FUNCTION, "callstack_pop(pid=%d)", proc->pid);
+	elem = &proc->callstack[proc->callstack_depth - 1];
+	if (!elem->is_syscall && elem->return_addr) {
+
+		Breakpoint * bp = address2bpstruct(proc, elem->return_addr);
+		SymBreakpoint * symbp = elem->c_un.symbp;
+
+		/* Unchain one recursion level.  */
+		struct return_reclev_t * reclev = symbp->data;
+		symbp->data = reclev->next;
+
+		/* Remove the handler, if this was the last recursion
+		 * level.  */
+		if (symbp->data == NULL)
+			delete_symbp(proc, bp, symbp);
+	}
+	if (elem->arch_ptr != NULL) {
+		free(elem->arch_ptr);
+		elem->arch_ptr = NULL;
+	}
+	proc->callstack_depth--;
 }
 
 static void

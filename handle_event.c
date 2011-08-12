@@ -532,11 +532,14 @@ handle_breakpoint(Event *event) {
 	sbp = address2bpstruct(event->proc, event->e_un.brk_addr);
 	if (sbp != NULL) {
 		SymBreakpoint * symbp;
-		for (symbp = sbp->symbps; symbp != NULL; symbp = symbp->next) {
+		for (symbp = sbp->symbps; symbp != NULL; ) {
+			/* Protect against removal during on_hit.  */
+			SymBreakpoint * next = symbp->next;
 			if (symbp->on_hit_cb != NULL) {
 				symbp->on_hit_cb(symbp, sbp, event->proc);
 				handled = 1;
 			}
+			symbp = next;
 		}
 	}
 
@@ -575,21 +578,4 @@ callstack_push_syscall(Process *proc, int sysnum) {
 		struct timezone tz;
 		gettimeofday(&elem->time_spent, &tz);
 	}
-}
-
-void
-callstack_pop(Process *proc) {
-	struct callstack_element *elem;
-	assert(proc->callstack_depth > 0);
-
-	debug(DEBUG_FUNCTION, "callstack_pop(pid=%d)", proc->pid);
-	elem = &proc->callstack[proc->callstack_depth - 1];
-	if (!elem->is_syscall && elem->return_addr) {
-		delete_breakpoint(proc, elem->return_addr);
-	}
-	if (elem->arch_ptr != NULL) {
-		free(elem->arch_ptr);
-		elem->arch_ptr = NULL;
-	}
-	proc->callstack_depth--;
 }

@@ -186,7 +186,7 @@ struct library_symbol {
 struct callstack_element {
 	union {
 		int syscall;
-		struct library_symbol * libfunc;
+		SymBreakpoint * symbp;
 	} c_un;
 	int is_syscall;
 	void * return_addr;
@@ -273,6 +273,7 @@ extern void delete_breakpoint(Process * proc, void * addr);
 extern Breakpoint * clone_breakpoint(const Breakpoint * bp);
 extern const char * breakpoint_name(const Breakpoint * bp);
 extern SymBreakpoint * create_symbp(struct library_symbol * libsym);
+extern void delete_symbp(Process * proc, Breakpoint * bp, SymBreakpoint * symbp);
 
 extern void enable_all_breakpoints(Process * proc);
 extern void disable_all_breakpoints(Process * proc);
