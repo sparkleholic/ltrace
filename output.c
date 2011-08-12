@@ -96,7 +96,7 @@ begin_of_line(enum tof type, Process *proc) {
 }
 
 static Function *
-name2func(char *name) {
+name2func(const char *name) {
 	Function *tmp;
 	const char *str1, *str2;
 
@@ -153,7 +153,7 @@ tabto(int col) {
 }
 
 void
-output_left_prot(enum tof type, Process *proc, char *function_name,
+output_left_prot(enum tof type, Process *proc, const char *function_name,
 		 Function *func)
 {
 	if (options.summary) {
@@ -210,14 +210,14 @@ output_left_prot(enum tof type, Process *proc, char *function_name,
 }
 
 void
-output_left(enum tof type, Process *proc, char *function_name)
+output_left(enum tof type, Process *proc, const char *function_name)
 {
 	return output_left_prot(type, proc, function_name,
 				name2func(function_name));
 }
 
 void
-output_right_prot(enum tof type, Process *proc, char *function_name,
+output_right_prot(enum tof type, Process *proc, const char *function_name,
 		  Function *func)
 {
 	static arg_type_info *arg_unknown = NULL;
@@ -333,7 +333,7 @@ output_right_prot(enum tof type, Process *proc, char *function_name,
 }
 
 void
-output_right(enum tof type, Process *proc, char *function_name)
+output_right(enum tof type, Process *proc, const char *function_name)
 {
 	return output_right_prot(type, proc, function_name,
 				 name2func(function_name));
