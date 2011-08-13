@@ -209,7 +209,7 @@ struct library_symbol {
 struct callstack_element {
 	union {
 		int syscall;
-		SymBreakpoint * symbp;
+		struct library_symbol * libsym;
 	} c_un;
 	int is_syscall;
 	void * return_addr;

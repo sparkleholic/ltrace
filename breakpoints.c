@@ -174,6 +174,7 @@ clone_breakpoint(const Breakpoint * bp) {
 		}
 
 		memcpy(copy_symbp, symbp, sizeof(*copy_symbp));
+		copy_symbp->data = symbp_copy_data(symbp);
 		copy_symbp->next = copy->symbps;
 		copy->symbps = copy_symbp;
 	}
@@ -369,7 +370,7 @@ return_on_hit_cb(SymBreakpoint * symbp,
 			calc_time_spent(proc);
 
 		struct library_symbol * libsym
-			= proc->callstack[callstack_depth].c_un.symbp->libsym;
+			= proc->callstack[callstack_depth].c_un.libsym;
 		output_right(LT_TOF_FUNCTIONR, proc, libsym->name);
 	}
 
@@ -430,7 +431,7 @@ callstack_push_symfunc(Process *proc, struct library_symbol *sym)
 		}
 		insert_breakpoint(proc, elem->return_addr, symbp);
 	}
-	elem->c_un.symbp = symbp;
+	elem->c_un.libsym = symbp->libsym;
 
 	/* Chain on the new recursion level.  */
 	struct return_reclev_t * reclev = malloc(sizeof(*reclev));
@@ -456,7 +457,7 @@ callstack_pop(Process *proc) {
 	if (!elem->is_syscall && elem->return_addr) {
 
 		Breakpoint * bp = address2bpstruct(proc, elem->return_addr);
-		SymBreakpoint * symbp = elem->c_un.symbp;
+		SymBreakpoint * symbp = lookup_return_symbp(bp);
 
 		/* Unchain one recursion level.  */
 		struct return_reclev_t * reclev = symbp->data;
