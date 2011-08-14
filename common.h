@@ -43,7 +43,8 @@ struct SymBreakpoint_Callbacks {
 	void (* on_disable_cb) (SymBreakpoint * self,
 				Breakpoint * bp, Process * proc);
 
-	/* If non-NULL, called when breakpoint is completely removed.  */
+	/* If non-NULL, called when breakpoint is completely removed.
+	 * This should free memory associated with SELF->data.  */
 	void (* destroy) (SymBreakpoint * self);
 
 	/* If non-NULL, called when SymBreakpoint is cloned.  It
@@ -215,7 +216,29 @@ struct callstack_element {
 	void * return_addr;
 	struct timeval time_spent;
 	void * arch_ptr;
+
+	/* If non-NULL, called when the element is completely removed.
+	 * This should free memory associated with SELF->data.  Called
+	 * when the callstack element is popped.  */
+	void (*destroy) (Process * proc, struct callstack_element * self);
+
+	/* If non-NULL, called when the element is cloned.  It should
+	   return a clone of the SELF->data pointer.  */
+	void * (*copy_data) (Process * proc, struct callstack_element * self);
+
+	/* Custom data for breakpoint handler.  */
+	void * data;
 };
+
+extern void callstack_element_destroy(Process * proc,
+				      struct callstack_element * self);
+
+extern void * callstack_element_copy_data(Process * proc,
+					  struct callstack_element * self);
+
+extern void callstack_push(Process *proc, struct callstack_element * emt);
+
+extern void callstack_pop(Process *proc);
 
 #define MAX_CALLDEPTH 64
 

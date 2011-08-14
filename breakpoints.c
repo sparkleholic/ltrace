@@ -91,7 +91,6 @@ delete_breakpoint(Process *proc, void *addr) {
 	*/
 
 	sbp->enabled--;
-	printf("delete_breakpoint %p %d\n", sbp->addr, sbp->enabled);
 	if (sbp->enabled == 0)
 		disable_breakpoint(proc, sbp);
 	assert(sbp->enabled >= 0);
@@ -357,18 +356,12 @@ return_on_hit_cb(SymBreakpoint * symbp,
 	struct return_reclev_t * reclev = symbp->data;
 	int callstack_depth = reclev->callstack_depth;
 	int j;
-	for (j = proc->callstack_depth - 1; j > callstack_depth; j--) {
-		/* XXX we also need to unchain relevant breakpoint
-		 * handler levels.  */
+	for (j = proc->callstack_depth - 1; j > callstack_depth; j--)
 		callstack_pop(proc);
-	}
 
 	proc->return_addr = bp->addr;
 
 	if (proc->state != STATE_IGNORED) {
-		if (opt_T || options.summary)
-			calc_time_spent(proc);
-
 		struct library_symbol * libsym
 			= proc->callstack[callstack_depth].c_un.libsym;
 		output_right(LT_TOF_FUNCTIONR, proc, libsym->name);
@@ -377,8 +370,53 @@ return_on_hit_cb(SymBreakpoint * symbp,
 	callstack_pop(proc);
 }
 
+static void
+return_destroy_cb(SymBreakpoint * symbp)
+{
+	while (symbp->data != NULL) {
+		struct return_reclev_t * reclev = symbp->data;
+		symbp->data = reclev->next;
+		free(reclev);
+	}
+}
+
+static void *
+return_copy_data_cb(SymBreakpoint * symbp)
+{
+	struct return_reclev_t * copy = NULL;
+	struct return_reclev_t * it;
+	for (it = symbp->data; it != NULL; it = it->next) {
+		struct return_reclev_t * tmp = malloc(sizeof(*tmp));
+		if (tmp == NULL) {
+			error(0, errno, "probe_copy_data");
+			for (tmp = copy; tmp != NULL; ) {
+				it = tmp->next;
+				free(tmp);
+				tmp = it;
+			}
+			return NULL;
+		}
+		memcpy(tmp, it, sizeof(*tmp));
+		tmp->next = copy;
+		copy = tmp;
+	}
+
+	for (it = copy; it != NULL; ) {
+		struct return_reclev_t * next = it->next;
+		if (next != NULL)
+			next->next = it;
+		else
+			copy = it;
+		it = next;
+	}
+
+	return copy;
+}
+
 static SymBreakpoint_Callbacks return_symbp_callbacks = {
-	.on_hit_cb = return_on_hit_cb
+	.on_hit_cb = return_on_hit_cb,
+	.destroy = return_destroy_cb,
+	.copy_data = return_copy_data_cb,
 };
 
 static SymBreakpoint *
@@ -394,85 +432,45 @@ lookup_return_symbp(Breakpoint * bp)
 }
 
 static void
-callstack_push_symfunc(Process *proc, struct library_symbol *sym)
+return_callstack_element_destroy(Process * proc,
+				 struct callstack_element * elem)
 {
-	struct callstack_element *elem, *prev;
-
-	debug(DEBUG_FUNCTION, "callstack_push_symfunc(pid=%d, symbol=%s)", proc->pid, sym->name);
-	/* FIXME: not good -- should use dynamic allocation. 19990703 mortene. */
-	if (proc->callstack_depth == MAX_CALLDEPTH - 1) {
-		fprintf(stderr, "%s: Error: call nesting too deep!\n", __func__);
-		abort();
-		return;
-	}
-
-	prev = &proc->callstack[proc->callstack_depth-1];
-	elem = &proc->callstack[proc->callstack_depth];
-
-	/* Handle functions like atexit() on mips which have no
-	 * return.  */
-	if (elem->return_addr == prev->return_addr
-	    || proc->return_addr == NULL)
+	if (elem->return_addr == NULL)
 		return;
 
-	elem->is_syscall = 0;
-	elem->return_addr = proc->return_addr;
-
-	/* Look for preexisting breakpoint.  */
 	Breakpoint * bp = address2bpstruct(proc, elem->return_addr);
 	SymBreakpoint * symbp = lookup_return_symbp(bp);
 
-	/* Create new return handler if there's no other.  */
-	if (symbp == NULL) {
-		symbp = create_symbp(sym, &return_symbp_callbacks);
-		if (symbp == NULL) {
-			error(0, errno, "callstack_push_symfunc");
-			return;
-		}
-		insert_breakpoint(proc, elem->return_addr, symbp);
-	}
-	elem->c_un.libsym = symbp->libsym;
+	/* Unchain one recursion level.  */
+	struct return_reclev_t * reclev = symbp->data;
+	symbp->data = reclev->next;
+	free(reclev);
 
-	/* Chain on the new recursion level.  */
-	struct return_reclev_t * reclev = malloc(sizeof(*reclev));
-	reclev->callstack_depth = proc->callstack_depth;
-	reclev->next = symbp->data;
-	symbp->data = reclev;
-
-	proc->callstack_depth++;
-
-	if (opt_T || options.summary) {
-		struct timezone tz;
-		gettimeofday(&elem->time_spent, &tz);
-	}
+	/* Remove the handler, if this was the last recursion
+	 * level.  */
+	if (symbp->data == NULL)
+		delete_symbp(proc, bp, symbp);
 }
 
-void
-callstack_pop(Process *proc) {
-	struct callstack_element *elem;
-	assert(proc->callstack_depth > 0);
+static void *
+return_callstack_element_copy_data(Process * proc,
+				   struct callstack_element * elem)
+{
+	assert(elem->data == NULL);
+	return elem->data;
+}
 
-	debug(DEBUG_FUNCTION, "callstack_pop(pid=%d)", proc->pid);
-	elem = &proc->callstack[proc->callstack_depth - 1];
-	if (!elem->is_syscall && elem->return_addr) {
-
-		Breakpoint * bp = address2bpstruct(proc, elem->return_addr);
-		SymBreakpoint * symbp = lookup_return_symbp(bp);
-
-		/* Unchain one recursion level.  */
-		struct return_reclev_t * reclev = symbp->data;
-		symbp->data = reclev->next;
-
-		/* Remove the handler, if this was the last recursion
-		 * level.  */
-		if (symbp->data == NULL)
-			delete_symbp(proc, bp, symbp);
-	}
-	if (elem->arch_ptr != NULL) {
-		free(elem->arch_ptr);
-		elem->arch_ptr = NULL;
-	}
-	proc->callstack_depth--;
+static void
+callstack_push_pltbp(Process *proc,
+		     SymBreakpoint * symbp, SymBreakpoint * ret_symbp)
+{
+	struct callstack_element elem = {};
+	elem.is_syscall = 0;
+	elem.return_addr = proc->return_addr;
+	elem.c_un.libsym = symbp->libsym;
+	elem.destroy = &return_callstack_element_destroy;
+	elem.copy_data = &return_callstack_element_copy_data;
+	callstack_push(proc, &elem);
 }
 
 static void
@@ -484,7 +482,28 @@ pltbp_on_hit_cb(SymBreakpoint * symbp, Breakpoint * bp, Process * proc)
 	void * sp;
 	proc->stack_pointer = sp = get_stack_pointer(proc);
 	proc->return_addr = get_return_addr(proc, sp);
-	callstack_push_symfunc(proc, symbp->libsym);
+
+	/* Create new return handler if there's no other.  */
+	Breakpoint * ret_bp = address2bpstruct(proc, proc->return_addr);
+	SymBreakpoint * ret_symbp = lookup_return_symbp(ret_bp);
+	if (ret_symbp == NULL) {
+		ret_symbp = create_symbp(symbp->libsym,
+					 &return_symbp_callbacks);
+		if (ret_symbp == NULL) {
+			error(0, errno, "pltbp_on_hit_cb");
+			return;
+		}
+		insert_breakpoint(proc, proc->return_addr, ret_symbp);
+	}
+
+	/* Chain on the new recursion level.  */
+	struct return_reclev_t * reclev = malloc(sizeof(*reclev));
+	reclev->callstack_depth = proc->callstack_depth;
+	reclev->next = ret_symbp->data;
+	ret_symbp->data = reclev;
+
+	/* Push new callstack entry.  */
+	callstack_push_pltbp(proc, symbp, ret_symbp);
 	output_left(LT_TOF_FUNCTION, proc, symbp->libsym->name);
 
 #ifdef PLT_REINITALISATION_BP
@@ -542,49 +561,6 @@ probe_on_disable_cb(SymBreakpoint * symbp, Breakpoint * bp, Process * proc)
 	}
 }
 
-static void
-probe_destroy(SymBreakpoint * symbp)
-{
-	while (symbp->data != NULL) {
-		struct return_reclev_t * reclev = symbp->data;
-		symbp->data = reclev->next;
-		free(reclev);
-	}
-}
-
-static void *
-probe_copy_data(SymBreakpoint * symbp)
-{
-	struct return_reclev_t * copy = NULL;
-	struct return_reclev_t * it;
-	for (it = symbp->data; it != NULL; it = it->next) {
-		struct return_reclev_t * tmp = malloc(sizeof(*tmp));
-		if (tmp == NULL) {
-			error(0, errno, "probe_copy_data");
-			for (tmp = copy; tmp != NULL; ) {
-				it = tmp->next;
-				free(tmp);
-				tmp = it;
-			}
-			return NULL;
-		}
-		memcpy(tmp, it, sizeof(*tmp));
-		tmp->next = copy;
-		copy = tmp;
-	}
-
-	for (it = copy; it != NULL; it = it->next) {
-		struct return_reclev_t * next = it->next;
-		if (next != NULL)
-			next->next = it;
-		else
-			copy = it;
-		it = next;
-	}
-
-	return copy;
-}
-
 void
 breakpoints_init(Process *proc) {
 	struct library_symbol *sym;
@@ -624,14 +600,12 @@ breakpoints_init(Process *proc) {
 	}
 	for (sym = proc->list_of_symbols; sym; sym = sym->next) {
 		static SymBreakpoint_Callbacks pltbp_symbp_callbacks = {
-			.on_hit_cb = pltbp_on_hit_cb
+			.on_hit_cb = pltbp_on_hit_cb,
 		};
 		static SymBreakpoint_Callbacks probe_symbp_callbacks = {
 			.on_hit_cb = probe_on_hit_cb,
 			.on_enable_cb = probe_on_enable_cb,
 			.on_disable_cb = probe_on_disable_cb,
-			.destroy = probe_destroy,
-			.copy_data = probe_copy_data
 		};
 		SymBreakpoint_Callbacks * cbs = NULL;
 		switch (sym->sym_type) {
@@ -718,4 +692,59 @@ symbp_copy_data(SymBreakpoint * self)
 		return self->cbs->copy_data(self);
 	else
 		return self->data;
+}
+
+void
+callstack_element_destroy(Process * proc, struct callstack_element * self)
+{
+	if (self->destroy != NULL)
+		self->destroy(proc, self);
+}
+
+void *
+callstack_element_copy_data(Process * proc, struct callstack_element * self)
+{
+	if (self->copy_data != NULL)
+		return self->copy_data(proc, self);
+	else
+		return self->data;
+}
+
+void
+callstack_push(Process *proc, struct callstack_element * elem)
+{
+	debug(DEBUG_FUNCTION, "callstack_push(pid=%d)", proc->pid);
+
+	/* FIXME: not good -- should use dynamic allocation. 19990703 mortene. */
+	if (proc->callstack_depth == MAX_CALLDEPTH - 1) {
+		fprintf(stderr, "%s: Error: call nesting too deep!\n", __func__);
+		abort();
+		return;
+	}
+
+	if (proc->state != STATE_IGNORED && (opt_T || options.summary)) {
+		struct timezone tz;
+		gettimeofday(&elem->time_spent, &tz);
+	}
+
+	proc->callstack[proc->callstack_depth++] = *elem;
+}
+
+void
+callstack_pop(Process *proc) {
+	struct callstack_element *elem;
+	assert(proc->callstack_depth > 0);
+
+	debug(DEBUG_FUNCTION, "callstack_pop(pid=%d)", proc->pid);
+
+	if (proc->state != STATE_IGNORED && (opt_T || options.summary))
+		calc_time_spent(proc);
+
+	elem = &proc->callstack[--proc->callstack_depth];
+	callstack_element_destroy(proc, elem);
+
+	if (elem->arch_ptr != NULL) {
+		free(elem->arch_ptr);
+		elem->arch_ptr = NULL;
+	}
 }

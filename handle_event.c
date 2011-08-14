@@ -30,7 +30,6 @@ static void handle_new(Event *event);
 static void remove_proc(Process *proc);
 
 static void callstack_push_syscall(Process *proc, int sysnum);
-void callstack_pop(Process *proc);
 
 static char * shortsignal(Process *proc, int signum);
 static char * sysname(Process *proc, int sysnum);
@@ -193,6 +192,11 @@ handle_clone(Event * event) {
 	p->breakpoints = dict_clone(event->proc->breakpoints, address_clone, breakpoint_clone);
 	p->pid = event->e_un.newpid;
 	p->parent = event->proc;
+	int i;
+	for (i = 0; i < p->callstack_depth; ++i) {
+		struct callstack_element * elem = &p->callstack[i];
+		elem->data = callstack_element_copy_data(p, elem);
+	}
 
 	if (pending_new(p->pid)) {
 		pending_new_remove(p->pid);
@@ -549,24 +553,9 @@ handle_breakpoint(Event *event) {
 
 static void
 callstack_push_syscall(Process *proc, int sysnum) {
-	struct callstack_element *elem;
-
-	debug(DEBUG_FUNCTION, "callstack_push_syscall(pid=%d, sysnum=%d)", proc->pid, sysnum);
-	/* FIXME: not good -- should use dynamic allocation. 19990703 mortene. */
-	if (proc->callstack_depth == MAX_CALLDEPTH - 1) {
-		fprintf(stderr, "%s: Error: call nesting too deep!\n", __func__);
-		abort();
-		return;
-	}
-
-	elem = &proc->callstack[proc->callstack_depth];
-	elem->is_syscall = 1;
-	elem->c_un.syscall = sysnum;
-	elem->return_addr = NULL;
-
-	proc->callstack_depth++;
-	if (opt_T || options.summary) {
-		struct timezone tz;
-		gettimeofday(&elem->time_spent, &tz);
-	}
+	struct callstack_element elem = {};
+	elem.is_syscall = 1;
+	elem.c_un.syscall = sysnum;
+	elem.return_addr = NULL;
+	callstack_push(proc, &elem);
 }
