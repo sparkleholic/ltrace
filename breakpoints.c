@@ -130,7 +130,7 @@ delete_symbp(Process * proc, Breakpoint * bp, SymBreakpoint * symbp)
 	for (it = *nextp; it != NULL; it = *(nextp = &it->next)) {
 		if (it == symbp) {
 			*nextp = it->next;
-			symbp_destroy(it);
+			symbp_free_data(it);
 			/*
 			if (bp->symbps == NULL) {
 				printf("last handler gone, deleting %p\n", bp->addr);
@@ -371,7 +371,7 @@ return_on_hit_cb(SymBreakpoint * symbp,
 }
 
 static void
-return_destroy_cb(SymBreakpoint * symbp)
+return_free_data_cb(SymBreakpoint * symbp)
 {
 	while (symbp->data != NULL) {
 		struct return_reclev_t * reclev = symbp->data;
@@ -415,8 +415,8 @@ return_copy_data_cb(SymBreakpoint * symbp)
 
 static SymBreakpoint_Callbacks return_symbp_callbacks = {
 	.on_hit_cb = return_on_hit_cb,
-	.destroy = return_destroy_cb,
-	.copy_data = return_copy_data_cb,
+	.free_data_cb = return_free_data_cb,
+	.copy_data_cb = return_copy_data_cb,
 };
 
 static SymBreakpoint *
@@ -432,8 +432,8 @@ lookup_return_symbp(Breakpoint * bp)
 }
 
 static void
-return_callstack_element_destroy(Process * proc,
-				 struct callstack_element * elem)
+return_callstack_element_free_data(Process * proc,
+				   struct callstack_element * elem)
 {
 	if (elem->return_addr == NULL)
 		return;
@@ -468,8 +468,8 @@ callstack_push_pltbp(Process *proc,
 	elem.is_syscall = 0;
 	elem.return_addr = proc->return_addr;
 	elem.c_un.libsym = symbp->libsym;
-	elem.destroy = &return_callstack_element_destroy;
-	elem.copy_data = &return_callstack_element_copy_data;
+	elem.free_data_cb = &return_callstack_element_free_data;
+	elem.copy_data_cb = &return_callstack_element_copy_data;
 	callstack_push(proc, &elem);
 }
 
@@ -513,6 +513,25 @@ pltbp_on_hit_cb(SymBreakpoint * symbp, Breakpoint * bp, Process * proc)
 #endif
 }
 
+SymBreakpoint_Callbacks pltbp_symbp_callbacks = {
+	.on_hit_cb = pltbp_on_hit_cb,
+};
+
+/* XXX should be hidden.  */
+int
+pltbp_tracepoint_inst(TracePoint * tp, Process * proc)
+{
+	SymBreakpoint * symbp
+		= create_symbp(tp->libsym, &pltbp_symbp_callbacks);
+	if (symbp == NULL) {
+		error(0, errno, "pltbp_tracepoint_inst");
+		return 0;
+	}
+
+	insert_breakpoint(proc, sym2addr(proc, tp->libsym), symbp);
+	return 1;
+}
+
 static void
 probe_on_hit_cb(SymBreakpoint * symbp, Breakpoint * bp, Process * proc)
 {
@@ -527,22 +546,20 @@ probe_on_hit_cb(SymBreakpoint * symbp, Breakpoint * bp, Process * proc)
 		.params_right = 0,
 		.next = NULL
 	};
-	output_left_prot(LT_TOF_FUNCTION, proc, symbp->libsym->name, &prot);
-	output_right_prot(LT_TOF_FUNCTIONR, proc, symbp->libsym->name, &prot);
+	output_left_prot(LT_TOF_NONE, proc, symbp->libsym->name, &prot);
+	output_right_prot(LT_TOF_NONE, proc, symbp->libsym->name, &prot);
 }
 
 static void
 probe_on_enable_cb(SymBreakpoint * symbp, Breakpoint * bp, Process * proc)
 {
 	/* Bump the probe semaphore.  */
-	struct library_symbol * libsym = symbp->libsym;
-	if (libsym != NULL
-	    && libsym->sym_type == LS_ST_PROBE
-	    && libsym->st_probe.sema != 0) {
+	void * sema_addr = symbp->data;
+	if (sema_addr != NULL) {
 		uint16_t sema = 0;
-		umovebytes(proc, libsym->st_probe.sema, &sema, sizeof(sema));
+		umovebytes(proc, sema_addr, &sema, sizeof(sema));
 		++sema;
-		ustorebytes(proc, libsym->st_probe.sema, &sema, sizeof(sema));
+		ustorebytes(proc, sema_addr, &sema, sizeof(sema));
 	}
 }
 
@@ -550,21 +567,44 @@ static void
 probe_on_disable_cb(SymBreakpoint * symbp, Breakpoint * bp, Process * proc)
 {
 	/* Decrease the probe semaphore.  */
-	struct library_symbol * libsym = symbp->libsym;
-	if (libsym != NULL
-	    && libsym->sym_type == LS_ST_PROBE
-	    && libsym->st_probe.sema != 0) {
+	void * sema_addr = symbp->data;
+	if (sema_addr != NULL) {
 		uint16_t sema = 1;
-		umovebytes(proc, libsym->st_probe.sema, &sema, sizeof(sema));
+		umovebytes(proc, sema_addr, &sema, sizeof(sema));
 		--sema;
-		ustorebytes(proc, libsym->st_probe.sema, &sema, sizeof(sema));
+		ustorebytes(proc, sema_addr, &sema, sizeof(sema));
 	}
+}
+
+SymBreakpoint_Callbacks probe_symbp_callbacks = {
+	.on_hit_cb = probe_on_hit_cb,
+	.on_enable_cb = probe_on_enable_cb,
+	.on_disable_cb = probe_on_disable_cb,
+};
+
+/* XXX should be hidden.  */
+int
+probe_tracepoint_inst(TracePoint * tp, Process * proc)
+{
+	SymBreakpoint * symbp
+		= create_symbp(tp->libsym, &probe_symbp_callbacks);
+	if (symbp == NULL) {
+		error(0, errno, "probe_tracepoint_inst");
+		return 0;
+	}
+
+	/* Copy over the semaphore address.  */
+	symbp->data = tp->data;
+
+	/* XXX we don't call sym2addr here, because that's only
+	 * relevant for PLT entries.  Really, that interface should be
+	 * renamed to reflect that.  */
+	insert_breakpoint(proc, tp->libsym->enter_addr, symbp);
+	return 1;
 }
 
 void
 breakpoints_init(Process *proc) {
-	struct library_symbol *sym;
-
 	debug(DEBUG_FUNCTION, "breakpoints_init(pid=%d)", proc->pid);
 	if (proc->breakpoints) {	/* let's remove that struct */
 		dict_apply_to_all(proc->breakpoints, free_bp_cb, NULL);
@@ -574,6 +614,15 @@ breakpoints_init(Process *proc) {
 	proc->breakpoints = dict_init(dict_key2hash_int, dict_key_cmp_int);
 
 	if (options.libcalls && proc->filename) {
+		TracePoint * tp;
+		for (tp = proc->tracepoints; tp != NULL; ) {
+			TracePoint * next = tp->next;
+			tracepoint_free_data(tp);
+			free(tp);
+			tp = next;
+		}
+		proc->tracepoints = NULL;
+
 		/* FIXME: memory leak when called by exec(): */
 		proc->list_of_symbols = read_elf(proc);
 		if (opt_e) {
@@ -598,31 +647,12 @@ breakpoints_init(Process *proc) {
 	} else {
 		proc->list_of_symbols = NULL;
 	}
-	for (sym = proc->list_of_symbols; sym; sym = sym->next) {
-		static SymBreakpoint_Callbacks pltbp_symbp_callbacks = {
-			.on_hit_cb = pltbp_on_hit_cb,
-		};
-		static SymBreakpoint_Callbacks probe_symbp_callbacks = {
-			.on_hit_cb = probe_on_hit_cb,
-			.on_enable_cb = probe_on_enable_cb,
-			.on_disable_cb = probe_on_disable_cb,
-		};
-		SymBreakpoint_Callbacks * cbs = NULL;
-		switch (sym->sym_type) {
-		case LS_ST_FUNCTION:
-			cbs = &pltbp_symbp_callbacks;
-			break;
-		case LS_ST_PROBE:
-			cbs = &probe_symbp_callbacks;
-			break;
-		}
-		SymBreakpoint * symbp = create_symbp(sym, cbs);
-		if (symbp == NULL) {
-			error(0, errno, "breakpoints_init");
-			continue;
-		}
-		insert_breakpoint(proc, sym2addr(proc, sym), symbp);
-	}
+
+	TracePoint * tp;
+	for (tp = proc->tracepoints; tp != NULL; tp = tp->next)
+		if (!tracepoint_inst(tp, proc))
+			error(0, 0, "Can't trace %s", tracepoint_name(tp));
+
 	proc->callstack_depth = 0;
 	proc->breakpoints_enabled = -1;
 }
@@ -678,34 +708,34 @@ symbp_on_disable(SymBreakpoint * self, Breakpoint * bp, Process * proc)
 }
 
 void
-symbp_destroy(SymBreakpoint * self)
+symbp_free_data(SymBreakpoint * self)
 {
-	if (self->cbs != NULL && self->cbs->destroy != NULL)
-		self->cbs->destroy(self);
+	if (self->cbs != NULL && self->cbs->free_data_cb != NULL)
+		self->cbs->free_data_cb(self);
 	free(self);
 }
 
 void *
 symbp_copy_data(SymBreakpoint * self)
 {
-	if (self->cbs != NULL && self->cbs->copy_data != NULL)
-		return self->cbs->copy_data(self);
+	if (self->cbs != NULL && self->cbs->copy_data_cb != NULL)
+		return self->cbs->copy_data_cb(self);
 	else
 		return self->data;
 }
 
 void
-callstack_element_destroy(Process * proc, struct callstack_element * self)
+callstack_element_free_data(Process * proc, struct callstack_element * self)
 {
-	if (self->destroy != NULL)
-		self->destroy(proc, self);
+	if (self->free_data_cb != NULL)
+		self->free_data_cb(proc, self);
 }
 
 void *
 callstack_element_copy_data(Process * proc, struct callstack_element * self)
 {
-	if (self->copy_data != NULL)
-		return self->copy_data(proc, self);
+	if (self->copy_data_cb != NULL)
+		return self->copy_data_cb(proc, self);
 	else
 		return self->data;
 }
@@ -741,7 +771,7 @@ callstack_pop(Process *proc) {
 		calc_time_spent(proc);
 
 	elem = &proc->callstack[--proc->callstack_depth];
-	callstack_element_destroy(proc, elem);
+	callstack_element_free_data(proc, elem);
 
 	if (elem->arch_ptr != NULL) {
 		free(elem->arch_ptr);

@@ -667,8 +667,11 @@ read_elf(Process *proc) {
 				debug(2,"sym %s not a function",name);
 				continue;
 			}
-			add_library_symbol(addr, name, &library_symbols, 0,
-					ELF64_ST_BIND(sym.st_info) != 0);
+			int weak = ELF64_ST_BIND(sym.st_info) == STB_WEAK;
+			struct library_symbol * libsym
+				= add_library_symbol(addr, name,
+						     &library_symbols,
+						     0, weak);
 			if (!lib_tail)
 				lib_tail = &(library_symbols->next);
 		}
@@ -717,8 +720,19 @@ read_elf(Process *proc) {
 					addr = arch_plt_sym_val(lte, i, &rela);
 				}
 
-				add_library_symbol(addr, name, &library_symbols, pltt,
-						ELF64_ST_BIND(sym.st_info) == STB_WEAK);
+				int weak = ELF64_ST_BIND(sym.st_info) == STB_WEAK;
+				struct library_symbol * libsym
+					= add_library_symbol(addr, name,
+							     &library_symbols,
+							     pltt, weak);
+				TracePoint tp = {
+					.inst_cb = &pltbp_tracepoint_inst,
+					.libsym = libsym,
+				};
+				if (tracepoint_add(proc, &tp) == NULL)
+					error(0, 0,
+					      "Couldn't add tracepoint %s",
+					      tracepoint_name(&tp));
 				if (!lib_tail)
 					lib_tail = &(library_symbols->next);
 			}
@@ -771,13 +785,29 @@ read_elf(Process *proc) {
 			if (xptr->name && strcmp(xptr->name, name) == 0) {
 				/* FIXME: Should be able to use &library_symbols as above.  But
 				   when you do, none of the real library symbols cause breaks. */
-				add_library_symbol(opd2addr(lte, addr),
-						   name, lib_tail, LS_TOPLT_NONE, 0);
+				GElf_Addr sym_addr = opd2addr(lte, addr);
+				struct library_symbol * libsym
+					= add_library_symbol(sym_addr, name,
+							     lib_tail,
+							     LS_TOPLT_NONE, 0);
+				TracePoint tp = {
+					.inst_cb = &pltbp_tracepoint_inst,
+					.libsym = libsym,
+				};
+				if (tracepoint_add(proc, &tp) == NULL)
+					error(0, 0,
+					      "Couldn't add tracepoint %s",
+					      tracepoint_name(&tp));
 				xptr->found = 1;
 				break;
 			}
 	}
 
+	/* XXX the following is plain strange.  So above we look to
+	 * main executable for arbitrary symbols, and those that we
+	 * fail to find we look for in the PLTs of _other_ libraries?
+	 * This begs for rewrite.  */
+#if 0
 	unsigned found_count = 0;
 
 	for (xptr = opt_x; xptr; xptr = xptr->next) {
@@ -801,6 +831,7 @@ read_elf(Process *proc) {
 			break;
 		}
 	}
+#endif
 
 	for (xptr = opt_x; xptr; xptr = xptr->next)
 		if ( ! xptr->found) {
@@ -926,8 +957,15 @@ read_elf(Process *proc) {
 					add_library_symbol(pc + bias, full,
 							   lib_tail,
 							   LS_TOPLT_NONE, 0);
-				sym->sym_type = LS_ST_PROBE;
-				sym->st_probe.sema = (void *)(semaphore + bias);
+				TracePoint tp = {
+					.inst_cb = &probe_tracepoint_inst,
+					.libsym = sym,
+					.data = (void *)(semaphore + bias),
+				};
+				if (tracepoint_add(proc, &tp) == NULL)
+					error(0, 0,
+					      "Couldn't add tracepoint %s",
+					      tracepoint_name(&tp));
 			}
 		}
 	}

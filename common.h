@@ -45,11 +45,11 @@ struct SymBreakpoint_Callbacks {
 
 	/* If non-NULL, called when breakpoint is completely removed.
 	 * This should free memory associated with SELF->data.  */
-	void (* destroy) (SymBreakpoint * self);
+	void (* free_data_cb) (SymBreakpoint * self);
 
 	/* If non-NULL, called when SymBreakpoint is cloned.  It
 	   should return a clone of the SELF->data pointer.  */
-	void * (* copy_data) (SymBreakpoint * self);
+	void * (* copy_data_cb) (SymBreakpoint * self);
 };
 
 extern void symbp_on_hit(SymBreakpoint * self,
@@ -61,10 +61,14 @@ extern void symbp_on_enable(SymBreakpoint * self,
 extern void symbp_on_disable(SymBreakpoint * self,
 			     Breakpoint * bp, Process * proc);
 
-extern void symbp_destroy(SymBreakpoint * self);
+extern void symbp_free_data(SymBreakpoint * self);
 
 extern void * symbp_copy_data(SymBreakpoint * self);
 
+/* XXX these should go each to a module of its own, together with the
+ * relevant callbacks.  */
+extern SymBreakpoint_Callbacks pltbp_symbp_callbacks;
+extern SymBreakpoint_Callbacks probe_symbp_callbacks;
 
 struct SymBreakpoint {
 	SymBreakpoint * next;
@@ -85,6 +89,49 @@ struct Breakpoint {
 	int thumb_mode;
 #endif
 };
+
+/**
+ * TracePoint is a place that ltrace can trace.  If any given trace
+ * point is to be instantiated, INST_CB callback is used to get the
+ * actual SymBreakpoint instance to use.  There could conceivably be
+ * several trace points for a single symbol--for example if one trace
+ * point is based on ELF symbol table and another on Dwarf data.  On
+ * the other hand, the symbol could actually be NULL, if what is being
+ * traced is for example arbitrary user-defined address.
+ */
+typedef struct TracePoint TracePoint;
+struct TracePoint {
+	TracePoint * next;
+
+	/* Return code is bool--0 for failure, 1 for success.  */
+	int (* inst_cb) (TracePoint * self, Process * proc);
+
+	/* Return a string describing the name.  This should be
+	 * static, or in any case won't be released after use.  If the
+	 * callback is absent, or returns NULL, the name is
+	 * auto-generated.  */
+	const char * (* name_cb) (TracePoint * self);
+
+	/* If non-NULL, called when tracepoint is completely removed.
+	 * This should free memory associated with SELF->data.  */
+	void (* free_data_cb) (TracePoint * self);
+
+	struct library_symbol * libsym;
+	void * data;
+};
+
+/* Use (presumably stack-allocated) TP to create a new tracepoint that
+ * is added to PROC.  TP is not consumed.  */
+extern TracePoint * tracepoint_add(Process * proc, TracePoint * tp);
+
+extern int tracepoint_inst(TracePoint * self, Process * proc);
+extern const char * tracepoint_name(TracePoint * self);
+extern void tracepoint_free_data(TracePoint * self);
+
+/* XXX should be hidden.  */
+int probe_tracepoint_inst(TracePoint * tp, Process * proc);
+int pltbp_tracepoint_inst(TracePoint * tp, Process * proc);
+
 
 enum arg_type {
 	ARGTYPE_UNKNOWN = -1,
@@ -181,10 +228,6 @@ enum toplt {
 	LS_TOPLT_EXEC,		/* PLT for this symbol is executable. */
 	LS_TOPLT_POINT		/* PLT for this symbol is a non-executable. */
 };
-enum symtype {
-	LS_ST_FUNCTION,		/* Ltrace will place return breakpoints.  */
-	LS_ST_PROBE,		/* No return breakpoints will be placed.  */
-};
 
 extern Function * list_of_functions;
 extern char *PLTs_initialized_by_here;
@@ -193,15 +236,8 @@ struct library_symbol {
 	char * name;
 	void * enter_addr;
 	char needs_init;
-	enum symtype sym_type;
-	union {
-		/* Data for LS_ST_PROBE symbols.  */
-		struct {
-			/* Address of semaphore guarding the probe, if any.  */
-			void * sema;
-		} st_probe;
-	};
-	/* XXX Candidates for moving into the union.  */
+
+	/* XXX Candidates for moving into the symbp->data.  */
 	enum toplt plt_type;
 	char is_weak;
 	struct library_symbol * next;
@@ -220,23 +256,26 @@ struct callstack_element {
 	/* If non-NULL, called when the element is completely removed.
 	 * This should free memory associated with SELF->data.  Called
 	 * when the callstack element is popped.  */
-	void (*destroy) (Process * proc, struct callstack_element * self);
+	void (*free_data_cb) (Process * proc, struct callstack_element * self);
 
 	/* If non-NULL, called when the element is cloned.  It should
 	   return a clone of the SELF->data pointer.  */
-	void * (*copy_data) (Process * proc, struct callstack_element * self);
+	void * (*copy_data_cb) (Process * proc,
+				struct callstack_element * self);
 
 	/* Custom data for breakpoint handler.  */
 	void * data;
 };
 
-extern void callstack_element_destroy(Process * proc,
-				      struct callstack_element * self);
+extern void callstack_element_free_data(Process * proc,
+					struct callstack_element * self);
 
 extern void * callstack_element_copy_data(Process * proc,
 					  struct callstack_element * self);
 
-extern void callstack_push(Process *proc, struct callstack_element * emt);
+/* Push a new element to a callstack, based on (presumably
+ * stack-allocated) ELEM, which is not consumed by the call.  */
+extern void callstack_push(Process *proc, struct callstack_element * elem);
 
 extern void callstack_pop(Process *proc);
 
@@ -263,6 +302,7 @@ struct Process {
 	int callstack_depth;
 	struct callstack_element callstack[MAX_CALLDEPTH];
 	struct library_symbol * list_of_symbols;
+	TracePoint * tracepoints;
 
 	int libdl_hooked;
 	/* Arch-dependent: */

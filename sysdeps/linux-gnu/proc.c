@@ -189,12 +189,14 @@ linkmap_add_cb(void *data) { //const char *lib_name, ElfW(Addr) addr) {
 						", adding it.",
 						xptr->name, sym.st_value);
 				addr = sym.st_value;
-				add_library_symbol(addr, xptr->name, &library_symbols, LS_TOPLT_NONE, 0);
+				struct library_symbol * libsym
+					= add_library_symbol(addr, xptr->name,
+							     &library_symbols,
+							     LS_TOPLT_NONE, 0);
 				xptr->found = 1;
 				/* XXX need proper callbacks.  */
-				symbp = create_symbp(library_symbols, NULL);
-				bp_addr = sym2addr(lm_add->proc,
-						   library_symbols);
+				symbp = create_symbp(libsym, NULL);
+				bp_addr = sym2addr(lm_add->proc, libsym);
 				insert_breakpoint(lm_add->proc, bp_addr, symbp);
 			}
 		}
