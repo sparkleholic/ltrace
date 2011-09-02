@@ -9,6 +9,7 @@
 #include <asm/unistd.h>
 
 #include "common.h"
+#include "config.h"
 
 /* If the system headers did not provide the constants, hard-code the normal
    values.  */
@@ -54,15 +55,23 @@ umovelong (Process *proc, void *addr, long *result, arg_type_info *info) {
 	if (pointed_to == -1 && errno)
 		return -errno;
 
-	*result = pointed_to;
-	if (info) {
-		switch(info->type) {
-			case ARGTYPE_INT:
-				*result &= 0x00000000ffffffffUL;
-			default:
-				break;
-		};
+#if SIZEOF_LONG == 8
+	if (info != NULL
+	    && (info->type == ARGTYPE_INT
+		|| (proc->mask_32bit
+		    && (info->type == ARGTYPE_POINTER
+			|| info->type == ARGTYPE_STRING)))) {
+#if defined (ARCH_ENDIAN_LITTLE)
+		pointed_to &= 0x00000000ffffffffUL;
+#elif defined (ARCH_ENDIAN_BIG)
+		pointed_to = (long)(((unsigned long)pointed_to) >> 32);
+#else
+# error arch.h has to define endianness
+#endif
 	}
+#endif
+
+	*result = pointed_to;
 	return 0;
 }
 #endif

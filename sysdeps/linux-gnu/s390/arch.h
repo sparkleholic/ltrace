@@ -6,6 +6,7 @@
 #define BREAKPOINT_VALUE { 0x00, 0x01 }
 #define BREAKPOINT_LENGTH 2
 #define DECR_PC_AFTER_BREAK 2
+#define ARCH_ENDIAN_BIG
 
 #ifdef __s390x__
 #define LT_ELFCLASS	ELFCLASS64
