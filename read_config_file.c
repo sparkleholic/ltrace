@@ -380,11 +380,6 @@ parse_nonpointer_type(char **str) {
 	arg_type_info *simple;
 	arg_type_info *info;
 
-	if (strncmp(*str, "typedef", 7) == 0) {
-		parse_typedef(str);
-		return lookup_prototype(ARGTYPE_UNKNOWN);
-	}
-
 	simple = str2type(str);
 	if (simple->type == ARGTYPE_UNKNOWN) {
 		info = lookup_typedef(str);
@@ -581,6 +576,12 @@ process_line(char *buf) {
 	line_no++;
 	debug(3, "Reading line %d of `%s'", line_no, filename);
 	eat_spaces(&str);
+
+	if (strncmp(str, "typedef", 7) == 0) {
+		parse_typedef(&str);
+		return NULL;
+	}
+
 	fun.return_info = parse_type(&str);
 	if (fun.return_info == NULL)
 		return NULL;
