@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <errno.h>
 
 #include "common.h"
 
@@ -108,7 +109,7 @@ xstrndup(char *str, size_t len) {
 }
 
 static void
-syntax_error(char *fmt, ...)
+report_error(char *fmt, ...)
 {
 	va_list args;
 	va_start(args, fmt);
@@ -124,7 +125,7 @@ parse_ident(char **str) {
 	char *ident = *str;
 
 	if (!isalnum(**str) && **str != '_') {
-		syntax_error("bad identifier");
+		report_error("bad identifier");
 		return NULL;
 	}
 
@@ -172,7 +173,7 @@ parse_int(char **str) {
 	char *end;
 	long n = strtol(*str, &end, 0);
 	if (end == *str) {
-		syntax_error("bad number");
+		report_error("bad number");
 		return 0;
 	}
 
@@ -254,7 +255,7 @@ parse_typedef(char **str) {
 	// Skip = sign
 	eat_spaces(str);
 	if (**str != '=') {
-		syntax_error("expected '=', got '%c'", **str);
+		report_error("expected '=', got '%c'", **str);
 		return;
 	}
 	(*str)++;
@@ -362,7 +363,7 @@ align_skip(size_t alignment, size_t offset) {
 static void
 align_struct(arg_type_info* info) {
 	size_t offset;
-	int i;
+	size_t i;
 
 	if (info->u.struct_info.size != 0)
 		return;			// Already done
@@ -370,7 +371,7 @@ align_struct(arg_type_info* info) {
 	// Compute internal padding due to alignment constraints for
 	// various types.
 	offset = 0;
-	for (i = 0; info->u.struct_info.fields[i] != NULL; i++) {
+	for (i = 0; i < info->u.struct_info.count; i++) {
 		arg_type_info *field = info->u.struct_info.fields[i];
 		offset += align_skip(arg_align(field), offset);
 		info->u.struct_info.offset[i] = offset;
@@ -392,22 +393,22 @@ destroy_type(arg_type_info *info)
 	case ARGTYPE_ENUM:
 		free(info->u.enum_info.keys);
 		free(info->u.enum_info.values);
-		return;
+		break;
 
 	case ARGTYPE_STRUCT:
-		for (i = 0; info->u.struct_info.fields[i] != NULL; ++i)
+		for (i = 0; i < info->u.struct_info.count; ++i)
 			destroy_type(info->u.struct_info.fields[i]);
 		free(info->u.struct_info.fields);
 		free(info->u.struct_info.offset);
-		return;
+		break;
 
 	case ARGTYPE_ARRAY:
 		destroy_type(info->u.array_info.elt_type);
-		return;
+		break;
 
 	case ARGTYPE_POINTER:
 		destroy_type(info->u.ptr_info.info);
-		return;
+		break;
 
 	case ARGTYPE_UNKNOWN:
 	case ARGTYPE_VOID:
@@ -427,8 +428,87 @@ destroy_type(arg_type_info *info)
 	case ARGTYPE_STRING:
 	case ARGTYPE_STRING_N:
 	case ARGTYPE_COUNT:
-		return;
+		break;
 	}
+
+	free(info);
+}
+
+static void
+destroy_fun(Function *fun)
+{
+	size_t i;
+	if (fun == NULL)
+		return;
+	destroy_type(fun->return_info);
+	for (i = 0; i < fun->num_params; ++i)
+		destroy_type(fun->arg_info[i]);
+}
+
+static int
+parse_struct(char **str, arg_type_info *info)
+{
+	(*str)++;        // Get past open paren
+	eat_spaces(str); // Empty arg list with whitespace inside
+
+	size_t allocd = 0;
+	info->u.struct_info.fields = NULL;
+	info->u.struct_info.offset = NULL;
+	info->u.struct_info.size = 0;
+	info->u.struct_info.count = 0;
+
+#define SI u.struct_info
+
+	while (**str && **str != ')') {
+		eat_spaces(str);
+		if (info->SI.count != 0) {
+			(*str)++;	// Get past comma
+			eat_spaces(str);
+		}
+
+		/* Make space for next field.  */
+		if (info->u.struct_info.count >= allocd) {
+			allocd = allocd > 0 ? 2 * allocd : 4;
+			void *nf, *no;
+
+			nf = realloc(info->SI.fields,
+				     sizeof(*info->SI.fields) * allocd);
+			if (nf == NULL) {
+			err:
+				destroy_type(info);
+				return -1;
+			}
+
+			no = realloc(info->SI.offset,
+				     sizeof(*info->SI.offset) * allocd);
+			if (no == NULL)
+				goto err;
+
+			info->SI.fields = nf;
+			info->SI.offset = no;
+		}
+
+		arg_type_info *type = parse_type(str);
+		if (type == NULL)
+			goto err;
+		info->SI.fields[info->SI.count++] = type;
+
+		// Must trim trailing spaces so the check for
+		// the closing paren is simple
+		eat_spaces(str);
+	}
+	if (**str != ')') {
+		report_error("expected ')', got '%c'", **str);
+		goto err;
+	}
+	(*str)++;		// Get past closing paren
+
+	memset(info->SI.offset, 0, sizeof(*info->SI.offset) * info->SI.count);
+
+#undef SI
+
+	align_struct(info);
+	return 0;
 }
 
 static arg_type_info *
@@ -495,7 +575,7 @@ parse_nonpointer_type(char **str) {
 			}
 			eat_spaces(str);
 			if (**str != '=') {
-				syntax_error("expected '=', got '%c'", **str);
+				report_error("expected '=', got '%c'", **str);
 				goto err;
 			}
 			++(*str);
@@ -554,43 +634,18 @@ parse_nonpointer_type(char **str) {
 		return info;
 
 	// Syntax: struct ( type,type,type,... )
-	case ARGTYPE_STRUCT:{
-		int field_num = 0;
-		(*str)++;		// Get past open paren
-		info->u.struct_info.fields =
-			malloc((MAX_ARGS + 1) * sizeof(void *));
-		info->u.struct_info.offset =
-			malloc((MAX_ARGS + 1) * sizeof(size_t));
-		info->u.struct_info.size = 0;
-		eat_spaces(str); // Empty arg list with whitespace inside
-		while (**str && **str != ')') {
-			if (field_num == MAX_ARGS) {
-				syntax_error("too many structure elements");
-				destroy_type(info);
-				return NULL;
-			}
-			eat_spaces(str);
-			if (field_num != 0) {
-				(*str)++;	// Get past comma
-				eat_spaces(str);
-			}
-			if ((info->u.struct_info.fields[field_num++] =
-						parse_type(str)) == NULL)
-				return NULL;
+	case ARGTYPE_STRUCT: {
+		if (parse_struct(str, info) == 0)
+			return info;
+		else
+			return NULL;
 
-			// Must trim trailing spaces so the check for
-			// the closing paren is simple
-			eat_spaces(str);
 		}
-		(*str)++;		// Get past closing paren
-		info->u.struct_info.fields[field_num] = NULL;
-		align_struct(info);
-		return info;
 	}
 
 	default:
 		if (info->type == ARGTYPE_UNKNOWN) {
-			syntax_error("unknown type at '%s'", *str);
+			report_error("unknown type at '%s'", *str);
 			free(info);
 			return NULL;
 		} else {
@@ -618,11 +673,8 @@ parse_type(char **str) {
 
 static Function *
 process_line(char *buf) {
-	Function fun;
-	Function *fun_p;
 	char *str = buf;
 	char *tmp;
-	int i;
 
 	line_no++;
 	debug(3, "Reading line %d of `%s'", line_no, filename);
@@ -633,41 +685,70 @@ process_line(char *buf) {
 		return NULL;
 	}
 
-	fun.return_info = parse_type(&str);
-	if (fun.return_info == NULL)
-		return NULL;
-	if (fun.return_info->type == ARGTYPE_UNKNOWN) {
-		debug(3, " Skipping line %d", line_no);
+	Function *fun = calloc(1, sizeof(*fun));
+	if (fun == NULL) {
+		report_error("alloc function: %s", strerror(errno));
 		return NULL;
 	}
-	debug(4, " return_type = %d", fun.return_info->type);
+
+	fun->return_info = parse_type(&str);
+	if (fun->return_info == NULL) {
+	err:
+		destroy_fun(fun);
+		return NULL;
+	}
+	if (fun->return_info->type == ARGTYPE_UNKNOWN) {
+		debug(3, " Skipping line %d", line_no);
+		goto err;
+	}
+	debug(4, " return_type = %d", fun->return_info->type);
+
 	eat_spaces(&str);
 	tmp = start_of_arg_sig(str);
-	if (!tmp) {
-		syntax_error("syntax error");
-		return NULL;
+	if (tmp == NULL) {
+		report_error("syntax error");
+		goto err;
 	}
 	*tmp = '\0';
-	fun.name = strdup(str);
+	fun->name = strdup(str);
 	str = tmp + 1;
-	debug(3, " name = %s", fun.name);
-	fun.params_right = 0;
-	for (i = 0; i < MAX_ARGS; i++) {
+	debug(3, " name = %s", fun->name);
+	fun->params_right = 0;
+
+	size_t allocd = 0;
+	fun->num_params = 0;
+	while (1) {
 		eat_spaces(&str);
 		if (*str == ')') {
 			break;
 		}
 		if (str[0] == '+') {
-			fun.params_right++;
+			fun->params_right++;
 			str++;
-		} else if (fun.params_right) {
-			fun.params_right++;
+		} else if (fun->params_right) {
+			fun->params_right++;
 		}
-		fun.arg_info[i] = parse_type(&str);
-		if (fun.arg_info[i] == NULL) {
-			syntax_error("unknown argument type");
-			return NULL;
+
+		if (fun->num_params >= allocd) {
+			allocd = allocd > 0 ? 2 * allocd : 8;
+			void * na = realloc(fun->arg_info,
+					    sizeof(*fun->arg_info) * allocd);
+			if (na == NULL) {
+				report_error("(re)alloc params: %s",
+					     strerror(errno));
+				goto err;
+			}
+
+			fun->arg_info = na;
 		}
+
+		arg_type_info *type = parse_type(&str);
+		if (type == NULL) {
+			report_error("unknown argument type");
+			goto err;
+		}
+		fun->arg_info[fun->num_params++] = type;
+
 		eat_spaces(&str);
 		if (*str == ',') {
 			str++;
@@ -677,18 +758,12 @@ process_line(char *buf) {
 		} else {
 			if (str[strlen(str) - 1] == '\n')
 				str[strlen(str) - 1] = '\0';
-			syntax_error("syntax error around \"%s\"", str);
-			return NULL;
+			report_error("syntax error around \"%s\"", str);
+			goto err;
 		}
 	}
-	fun.num_params = i;
-	fun_p = malloc(sizeof(Function));
-	if (!fun_p) {
-		perror("ltrace: malloc");
-		exit(1);
-	}
-	memcpy(fun_p, &fun, sizeof(Function));
-	return fun_p;
+
+	return fun;
 }
 
 void

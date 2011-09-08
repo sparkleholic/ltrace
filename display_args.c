@@ -75,8 +75,8 @@ display_arrayptr(enum tof type, Process *proc,
 			len += fprintf(options.output, ", ");
 		if (options.debug)
 			len += fprintf(options.output, "%p=", addr);
-		len +=
-			display_ptrto(type, proc, (long) addr, elt_type, st, st_info);
+		len += display_ptrto(type, proc, (long) addr,
+				     elt_type, st, st_info);
 		addr += elt_size;
 	}
 	if (i < array_len)
@@ -91,7 +91,7 @@ display_arrayptr(enum tof type, Process *proc,
 static int
 display_structptr(enum tof type, Process *proc,
 			     void *addr, arg_type_info * info) {
-	int i;
+	size_t i;
 	arg_type_info *field;
 	int len = 0;
 
@@ -99,17 +99,17 @@ display_structptr(enum tof type, Process *proc,
 		return fprintf(options.output, "NULL");
 
 	len += fprintf(options.output, "{ ");
-	for (i = 0; (field = info->u.struct_info.fields[i]) != NULL; i++) {
+	for (i = 0; i < info->u.struct_info.count; i++) {
+		field = info->u.struct_info.fields[i];
 		if (i != 0)
 			len += fprintf(options.output, ", ");
 		if (options.debug)
 			len +=
 				fprintf(options.output, "%p=",
 						addr + info->u.struct_info.offset[i]);
-		len +=
-			display_ptrto(LT_TOF_STRUCT, proc,
-					(long) addr + info->u.struct_info.offset[i],
-					field, addr, info);
+		len += display_ptrto(LT_TOF_STRUCT, proc,
+				     (long)addr + info->u.struct_info.offset[i],
+				     field, addr, info);
 	}
 	len += fprintf(options.output, " }");
 
