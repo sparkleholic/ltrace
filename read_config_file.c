@@ -623,7 +623,6 @@ process_line(char *buf) {
 	char *str = buf;
 	char *tmp;
 	int i;
-	int float_num = 0;
 
 	line_no++;
 	debug(3, "Reading line %d of `%s'", line_no, filename);
@@ -669,10 +668,6 @@ process_line(char *buf) {
 			syntax_error("unknown argument type");
 			return NULL;
 		}
-		if (fun.arg_info[i]->type == ARGTYPE_FLOAT)
-			fun.arg_info[i]->u.float_info.float_index = float_num++;
-		else if (fun.arg_info[i]->type == ARGTYPE_DOUBLE)
-			fun.arg_info[i]->u.double_info.float_index = float_num++;
 		eat_spaces(&str);
 		if (*str == ',') {
 			str++;

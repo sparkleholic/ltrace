@@ -241,6 +241,8 @@ gimme_float_arg(enum tof type, Process *proc, int arg_num) {
 	exit(1);
 }
 
+static unsigned f_index;
+
 long
 gimme_arg(enum tof type, Process *proc, int arg_num, arg_type_info *info) {
 	union {
@@ -249,10 +251,15 @@ gimme_arg(enum tof type, Process *proc, int arg_num, arg_type_info *info) {
 		double d;
 	} cvt;
 
-	if (info->type == ARGTYPE_FLOAT)
-		cvt.f = gimme_float_arg(type, proc, info->u.float_info.float_index);
-	else if (info->type == ARGTYPE_DOUBLE)
-		cvt.d = gimme_float_arg(type, proc, info->u.double_info.float_index);
+	if ((type == LT_TOF_FUNCTION || type == LT_TOF_FUNCTIONR)
+	    && arg_num == 0)
+		/* See above for the parameter passing convention.  */
+		f_index = 0;
+
+	if (info != NULL && info->type == ARGTYPE_FLOAT)
+		cvt.f = gimme_float_arg(type, proc, f_index++);
+	else if (info != NULL && info->type == ARGTYPE_DOUBLE)
+		cvt.d = gimme_float_arg(type, proc, f_index++);
 	else
 		cvt.l = gimme_long_arg(type, proc, arg_num);
 

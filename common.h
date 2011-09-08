@@ -94,16 +94,6 @@ typedef struct arg_type_info_t {
 		struct {
 			struct arg_type_info_t * info;
 		} ptr_info;
-
-		/* ARGTYPE_FLOAT */
-		struct {
-			size_t float_index;
-		} float_info;
-
-		/* ARGTYPE_DOUBLE */
-		struct {
-			size_t float_index;
-		} double_info;
 	} u;
 } arg_type_info;
 
