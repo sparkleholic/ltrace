@@ -107,14 +107,24 @@ xstrndup(char *str, size_t len) {
 	return ret;
 }
 
+static void
+syntax_error(char *fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	char buf[128];
+	vsnprintf(buf, sizeof(buf), fmt, args);
+	buf[sizeof(buf) - 1] = 0;
+	output_line(0, "%s:%d: error: %s\n", filename, line_no, buf);
+	error_count++;
+}
+
 static char *
 parse_ident(char **str) {
 	char *ident = *str;
 
 	if (!isalnum(**str) && **str != '_') {
-		output_line(0, "Syntax error in `%s', line %d: Bad identifier",
-				filename, line_no);
-		error_count++;
+		syntax_error("bad identifier");
 		return NULL;
 	}
 
@@ -162,9 +172,7 @@ parse_int(char **str) {
 	char *end;
 	long n = strtol(*str, &end, 0);
 	if (end == *str) {
-		output_line(0, "Syntax error in `%s', line %d: Bad number (%s)",
-				filename, line_no, *str);
-		error_count++;
+		syntax_error("bad number");
 		return 0;
 	}
 
@@ -246,10 +254,7 @@ parse_typedef(char **str) {
 	// Skip = sign
 	eat_spaces(str);
 	if (**str != '=') {
-		output_line(0,
-				"Syntax error in `%s', line %d: expected '=', got '%c'",
-				filename, line_no, **str);
-		error_count++;
+		syntax_error("expected '=', got '%c'", **str);
 		return;
 	}
 	(*str)++;
@@ -375,6 +380,57 @@ align_struct(arg_type_info* info) {
 	info->u.struct_info.size = offset;
 }
 
+static void
+destroy_type(arg_type_info *info)
+{
+	size_t i;
+
+	if (info == NULL)
+		return;
+
+	switch (info->type) {
+	case ARGTYPE_ENUM:
+		free(info->u.enum_info.keys);
+		free(info->u.enum_info.values);
+		return;
+
+	case ARGTYPE_STRUCT:
+		for (i = 0; info->u.struct_info.fields[i] != NULL; ++i)
+			destroy_type(info->u.struct_info.fields[i]);
+		free(info->u.struct_info.fields);
+		free(info->u.struct_info.offset);
+		return;
+
+	case ARGTYPE_ARRAY:
+		destroy_type(info->u.array_info.elt_type);
+		return;
+
+	case ARGTYPE_POINTER:
+		destroy_type(info->u.ptr_info.info);
+		return;
+
+	case ARGTYPE_UNKNOWN:
+	case ARGTYPE_VOID:
+	case ARGTYPE_INT:
+	case ARGTYPE_UINT:
+	case ARGTYPE_LONG:
+	case ARGTYPE_ULONG:
+	case ARGTYPE_OCTAL:
+	case ARGTYPE_CHAR:
+	case ARGTYPE_SHORT:
+	case ARGTYPE_USHORT:
+	case ARGTYPE_FLOAT:
+	case ARGTYPE_DOUBLE:
+	case ARGTYPE_ADDR:
+	case ARGTYPE_FILE:
+	case ARGTYPE_FORMAT:
+	case ARGTYPE_STRING:
+	case ARGTYPE_STRING_N:
+	case ARGTYPE_COUNT:
+		return;
+	}
+}
+
 static arg_type_info *
 parse_nonpointer_type(char **str) {
 	arg_type_info *simple;
@@ -431,19 +487,16 @@ parse_nonpointer_type(char **str) {
 			p = (struct enum_opt *) malloc(sizeof(*p));
 			eat_spaces(str);
 			p->key = parse_ident(str);
-			if (error_count) {
+			if (p->key == NULL) {
+			err:
+				free(p->key);
 				free(p);
 				return NULL;
 			}
 			eat_spaces(str);
 			if (**str != '=') {
-				free(p->key);
-				free(p);
-				output_line(0,
-						"Syntax error in `%s', line %d: expected '=', got '%c'",
-						filename, line_no, **str);
-				error_count++;
-				return NULL;
+				syntax_error("expected '=', got '%c'", **str);
+				goto err;
 			}
 			++(*str);
 			eat_spaces(str);
@@ -512,10 +565,8 @@ parse_nonpointer_type(char **str) {
 		eat_spaces(str); // Empty arg list with whitespace inside
 		while (**str && **str != ')') {
 			if (field_num == MAX_ARGS) {
-				output_line(0,
-						"Error in `%s', line %d: Too many structure elements",
-						filename, line_no);
-				error_count++;
+				syntax_error("too many structure elements");
+				destroy_type(info);
 				return NULL;
 			}
 			eat_spaces(str);
@@ -539,11 +590,8 @@ parse_nonpointer_type(char **str) {
 
 	default:
 		if (info->type == ARGTYPE_UNKNOWN) {
-			output_line(0, "Syntax error in `%s', line %d: "
-					"Unknown type encountered",
-					filename, line_no);
+			syntax_error("unknown type at '%s'", *str);
 			free(info);
-			error_count++;
 			return NULL;
 		} else {
 			return info;
@@ -557,7 +605,7 @@ parse_type(char **str) {
 	while (1) {
 		eat_spaces(str);
 		if (**str == '*') {
-			arg_type_info *outer = malloc(sizeof(*info));
+			arg_type_info *outer = malloc(sizeof(*outer));
 			outer->type = ARGTYPE_POINTER;
 			outer->u.info.type = info;
 			(*str)++;
@@ -597,9 +645,7 @@ process_line(char *buf) {
 	eat_spaces(&str);
 	tmp = start_of_arg_sig(str);
 	if (!tmp) {
-		output_line(0, "Syntax error in `%s', line %d", filename,
-				line_no);
-		error_count++;
+		syntax_error("syntax error");
 		return NULL;
 	}
 	*tmp = '\0';
@@ -620,10 +666,7 @@ process_line(char *buf) {
 		}
 		fun.arg_info[i] = parse_type(&str);
 		if (fun.arg_info[i] == NULL) {
-			output_line(0, "Syntax error in `%s', line %d"
-					": unknown argument type",
-					filename, line_no);
-			error_count++;
+			syntax_error("unknown argument type");
 			return NULL;
 		}
 		if (fun.arg_info[i]->type == ARGTYPE_FLOAT)
@@ -639,9 +682,7 @@ process_line(char *buf) {
 		} else {
 			if (str[strlen(str) - 1] == '\n')
 				str[strlen(str) - 1] = '\0';
-			output_line(0, "Syntax error in `%s', line %d at ...\"%s\"",
-					filename, line_no, str);
-			error_count++;
+			syntax_error("syntax error around \"%s\"", str);
 			return NULL;
 		}
 	}
