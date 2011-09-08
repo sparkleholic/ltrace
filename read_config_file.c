@@ -554,12 +554,16 @@ parse_nonpointer_type(char **str) {
 static arg_type_info *
 parse_type(char **str) {
 	arg_type_info *info = parse_nonpointer_type(str);
-	while (**str == '*') {
-		arg_type_info *outer = malloc(sizeof(*info));
-		outer->type = ARGTYPE_POINTER;
-		outer->u.ptr_info.info = info;
-		(*str)++;
-		info = outer;
+	while (1) {
+		eat_spaces(str);
+		if (**str == '*') {
+			arg_type_info *outer = malloc(sizeof(*info));
+			outer->type = ARGTYPE_POINTER;
+			outer->u.info.type = info;
+			(*str)++;
+			info = outer;
+		} else
+			break;
 	}
 	return info;
 }
