@@ -371,7 +371,7 @@ align_struct(arg_type_info* info) {
 	// Compute internal padding due to alignment constraints for
 	// various types.
 	offset = 0;
-	for (i = 0; i < info->u.struct_info.count; i++) {
+	for (i = 0; i < info->u.struct_info.num_fields; i++) {
 		arg_type_info *field = info->u.struct_info.fields[i];
 		offset += align_skip(arg_align(field), offset);
 		info->u.struct_info.offset[i] = offset;
@@ -396,7 +396,7 @@ destroy_type(arg_type_info *info)
 		break;
 
 	case ARGTYPE_STRUCT:
-		for (i = 0; i < info->u.struct_info.count; ++i)
+		for (i = 0; i < info->u.struct_info.num_fields; ++i)
 			destroy_type(info->u.struct_info.fields[i]);
 		free(info->u.struct_info.fields);
 		free(info->u.struct_info.offset);
@@ -455,19 +455,19 @@ parse_struct(char **str, arg_type_info *info)
 	info->u.struct_info.fields = NULL;
 	info->u.struct_info.offset = NULL;
 	info->u.struct_info.size = 0;
-	info->u.struct_info.count = 0;
+	info->u.struct_info.num_fields = 0;
 
 #define SI u.struct_info
 
 	while (**str && **str != ')') {
 		eat_spaces(str);
-		if (info->SI.count != 0) {
+		if (info->SI.num_fields != 0) {
 			(*str)++;	// Get past comma
 			eat_spaces(str);
 		}
 
 		/* Make space for next field.  */
-		if (info->u.struct_info.count >= allocd) {
+		if (info->u.struct_info.num_fields >= allocd) {
 			allocd = allocd > 0 ? 2 * allocd : 4;
 			void *nf, *no;
 
@@ -491,7 +491,7 @@ parse_struct(char **str, arg_type_info *info)
 		arg_type_info *type = parse_type(str);
 		if (type == NULL)
 			goto err;
-		info->SI.fields[info->SI.count++] = type;
+		info->SI.fields[info->SI.num_fields++] = type;
 
 		// Must trim trailing spaces so the check for
 		// the closing paren is simple
@@ -503,7 +503,8 @@ parse_struct(char **str, arg_type_info *info)
 	}
 	(*str)++;		// Get past closing paren
 
-	memset(info->SI.offset, 0, sizeof(*info->SI.offset) * info->SI.count);
+	memset(info->SI.offset, 0,
+	       sizeof(*info->SI.offset) * info->SI.num_fields);
 
 #undef SI
 

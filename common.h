@@ -61,7 +61,8 @@ enum arg_type {
 	ARGTYPE_COUNT		/* number of ARGTYPE_* values */
 };
 
-typedef struct arg_type_info_t {
+typedef struct arg_type_info_t arg_type_info;
+struct arg_type_info_t {
 	enum arg_type type;
 	union {
 		/* ARGTYPE_ENUM */
@@ -85,8 +86,9 @@ typedef struct arg_type_info_t {
 
 		/* ARGTYPE_STRUCT */
 		struct {
-			struct arg_type_info_t ** fields;	/* NULL-terminated */
+			arg_type_info ** fields;
 			size_t * offset;
+			size_t num_fields;
 			size_t size;
 		} struct_info;
 
@@ -95,7 +97,7 @@ typedef struct arg_type_info_t {
 			struct arg_type_info_t * info;
 		} ptr_info;
 	} u;
-} arg_type_info;
+};
 
 enum tof {
 	LT_TOF_NONE = 0,
@@ -110,9 +112,9 @@ typedef struct Function Function;
 struct Function {
 	const char * name;
 	arg_type_info * return_info;
-	int num_params;
-	arg_type_info * arg_info[MAX_ARGS];
-	int params_right;
+	size_t num_params;
+	arg_type_info ** arg_info;
+	size_t params_right;
 	Function * next;
 };
 

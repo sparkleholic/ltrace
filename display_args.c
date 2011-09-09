@@ -99,7 +99,7 @@ display_structptr(enum tof type, Process *proc,
 		return fprintf(options.output, "NULL");
 
 	len += fprintf(options.output, "{ ");
-	for (i = 0; i < info->u.struct_info.count; i++) {
+	for (i = 0; i < info->u.struct_info.num_fields; i++) {
 		field = info->u.struct_info.fields[i];
 		if (i != 0)
 			len += fprintf(options.output, ", ");
