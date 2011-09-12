@@ -428,7 +428,9 @@ destroy_type(arg_type_info *info)
 	case ARGTYPE_STRING:
 	case ARGTYPE_STRING_N:
 	case ARGTYPE_COUNT:
-		break;
+		/* Don't free, these are pointers to lookup table
+		 * above.  */
+		return;
 	}
 
 	free(info);
