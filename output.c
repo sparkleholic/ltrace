@@ -95,27 +95,35 @@ begin_of_line(enum tof type, Process *proc) {
 	}
 }
 
+/* The default prototype is: long X(long, long, long, long).  */
+static void
+build_default_prototype(Function *ret)
+{
+	static arg_type_info type_unknown = { ARGTYPE_UNKNOWN };
+	static arg_type_info * params[] = { &type_unknown, &type_unknown,
+					    &type_unknown, &type_unknown };
+	ret->return_info = &type_unknown;
+	ret->num_params = 4;
+	ret->arg_info = params;
+}
+
 static Function *
 name2func(char *name) {
 	Function *tmp;
 	const char *str1, *str2;
 
-	tmp = list_of_functions;
-	while (tmp) {
-#ifdef USE_DEMANGLE
-		str1 = options.demangle ? my_demangle(tmp->name) : tmp->name;
-		str2 = options.demangle ? my_demangle(name) : name;
-#else
+	for (tmp = list_of_functions; tmp != NULL; tmp = tmp->next) {
 		str1 = tmp->name;
 		str2 = name;
-#endif
-		if (!strcmp(str1, str2)) {
-
+		if (!strcmp(str1, str2))
 			return tmp;
-		}
-		tmp = tmp->next;
 	}
-	return NULL;
+
+	static Function def = { NULL };
+	if (def.name == NULL)
+		build_default_prototype(&def);
+
+	return &def;
 }
 
 void
@@ -155,9 +163,6 @@ tabto(int col) {
 void
 output_left(enum tof type, Process *proc, char *function_name) {
 	Function *func;
-	static arg_type_info *arg_unknown = NULL;
-	if (arg_unknown == NULL)
-	    arg_unknown = lookup_prototype(ARGTYPE_UNKNOWN);
 
 	if (options.summary) {
 		return;
@@ -179,38 +184,28 @@ output_left(enum tof type, Process *proc, char *function_name) {
 #endif
 
 	func = name2func(function_name);
-	if (!func) {
-		int i;
-		for (i = 0; i < 4; i++) {
+
+	size_t i;
+	if (func->num_params > func->params_right) {
+		size_t max = func->num_params - func->params_right - 1;
+		for (i = 0; i < max; i++) {
 			current_column +=
-			    display_arg(type, proc, i, arg_unknown);
+				display_arg(type, proc, i,
+					    func->arg_info[i]);
 			current_column += fprintf(options.output, ", ");
 		}
-		current_column += display_arg(type, proc, 4, arg_unknown);
-		return;
-	} else {
-		size_t i;
-		if (func->num_params > func->params_right) {
-			size_t max = func->num_params - func->params_right - 1;
-			for (i = 0; i < max; i++) {
-				current_column +=
-					display_arg(type, proc, i,
-						    func->arg_info[i]);
-				current_column += fprintf(options.output, ", ");
-			}
 
-			current_column +=
-			    display_arg(type, proc, i, func->arg_info[i]);
-			if (func->params_right) {
-				current_column += fprintf(options.output, ", ");
-			}
+		current_column +=
+		    display_arg(type, proc, i, func->arg_info[i]);
+		if (func->params_right) {
+			current_column += fprintf(options.output, ", ");
 		}
+	}
 
-		if (func->params_right
-		    || func->return_info->type == ARGTYPE_STRING_N
-		    || func->return_info->type == ARGTYPE_ARRAY) {
-			save_register_args(type, proc);
-		}
+	if (func->params_right
+	    || func->return_info->type == ARGTYPE_STRING_N
+	    || func->return_info->type == ARGTYPE_ARRAY) {
+		save_register_args(type, proc);
 	}
 }
 
@@ -271,32 +266,26 @@ output_right(enum tof type, Process *proc, char *function_name) {
 #endif
 	}
 
-	if (!func) {
-		current_column += fprintf(options.output, ") ");
-		tabto(options.align - 1);
-		fprintf(options.output, "= ");
-		display_arg(type, proc, -1, arg_unknown);
-	} else {
-		size_t i;
-		for (i = func->num_params - func->params_right;
-		     i < func->num_params - 1; i++) {
-			current_column +=
-			    display_arg(type, proc, i, func->arg_info[i]);
-			current_column += fprintf(options.output, ", ");
-		}
-		if (func->params_right) {
-			current_column +=
-			    display_arg(type, proc, i, func->arg_info[i]);
-		}
-		current_column += fprintf(options.output, ") ");
-		tabto(options.align - 1);
-		fprintf(options.output, "= ");
-		if (func->return_info->type == ARGTYPE_VOID) {
-			fprintf(options.output, "<void>");
-		} else {
-			display_arg(type, proc, -1, func->return_info);
-		}
+	size_t i;
+	for (i = func->num_params - func->params_right;
+	     i < func->num_params - 1; i++) {
+		current_column +=
+		    display_arg(type, proc, i, func->arg_info[i]);
+		current_column += fprintf(options.output, ", ");
 	}
+	if (func->params_right) {
+		current_column +=
+		    display_arg(type, proc, i, func->arg_info[i]);
+	}
+	current_column += fprintf(options.output, ") ");
+	tabto(options.align - 1);
+	fprintf(options.output, "= ");
+	if (func->return_info->type == ARGTYPE_VOID) {
+		fprintf(options.output, "<void>");
+	} else {
+		display_arg(type, proc, -1, func->return_info);
+	}
+
 	if (opt_T) {
 		fprintf(options.output, " <%lu.%06d>",
 			current_time_spent.tv_sec,
