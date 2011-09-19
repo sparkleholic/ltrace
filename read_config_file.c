@@ -4,12 +4,12 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <errno.h>
+#include <assert.h>
 
 #include "common.h"
 
 static int line_no;
 static char *filename;
-static int error_count = 0;
 
 static arg_type_info *parse_type(char **str);
 
@@ -79,18 +79,19 @@ lookup_prototype(enum arg_type at) {
 }
 
 static arg_type_info *
-str2type(char **str) {
-	struct list_of_pt_t *tmp = &list_of_pt[0];
-
-	while (tmp->name) {
-		if (!strncmp(*str, tmp->name, strlen(tmp->name))
-				&& index(" ,()#*;012345[", *(*str + strlen(tmp->name)))) {
-			*str += strlen(tmp->name);
-			return lookup_prototype(tmp->pt);
+str2type(char **name) {
+	struct list_of_pt_t *tmp;
+	for (tmp = &list_of_pt[0]; tmp->name != NULL; ++tmp) {
+		size_t tmp_len = strlen(tmp->name);
+		if (strncmp(*name, tmp->name, tmp_len) == 0) {
+			char next = (*name)[tmp_len];
+			if (next == 0 || index(" ,()#*;012345[", next) != 0) {
+				*name += tmp_len;
+				return lookup_prototype(tmp->pt);
+			}
 		}
-		tmp++;
 	}
-	return lookup_prototype(ARGTYPE_UNKNOWN);
+	return NULL;
 }
 
 static void
@@ -101,31 +102,25 @@ eat_spaces(char **str) {
 }
 
 static char *
-xstrndup(char *str, size_t len) {
-	char *ret = (char *) malloc(len + 1);
+xstrndup(char *str, size_t len)
+{
+	char *ret = (char *)malloc(len + 1);
+	if (ret == NULL) {
+		report_global_error("malloc: %s", strerror(errno));
+		return NULL;
+	}
 	strncpy(ret, str, len);
 	ret[len] = 0;
 	return ret;
-}
-
-static void
-report_error(char *fmt, ...)
-{
-	va_list args;
-	va_start(args, fmt);
-	char buf[128];
-	vsnprintf(buf, sizeof(buf), fmt, args);
-	buf[sizeof(buf) - 1] = 0;
-	output_line(0, "%s:%d: error: %s\n", filename, line_no, buf);
-	error_count++;
 }
 
 static char *
 parse_ident(char **str) {
 	char *ident = *str;
 
-	if (!isalnum(**str) && **str != '_') {
-		report_error("bad identifier");
+	if (!isalpha(**str) && **str != '_') {
+		puts(*str);
+		report_error(filename, line_no, "bad identifier");
 		return NULL;
 	}
 
@@ -133,6 +128,7 @@ parse_ident(char **str) {
 		++(*str);
 	}
 
+	/* N.B. xstrndup reports errors.  */
 	return xstrndup(ident, *str - ident);
 }
 
@@ -251,11 +247,14 @@ parse_typedef(char **str) {
 
 	// Grab out the name of the type
 	name = parse_ident(str);
+	if (name == NULL)
+		return;
 
 	// Skip = sign
 	eat_spaces(str);
 	if (**str != '=') {
-		report_error("expected '=', got '%c'", **str);
+		report_error(filename, line_no,
+			     "expected '=', got '%c'", **str);
 		return;
 	}
 	(*str)++;
@@ -500,7 +499,8 @@ parse_struct(char **str, arg_type_info *info)
 		eat_spaces(str);
 	}
 	if (**str != ')') {
-		report_error("expected ')', got '%c'", **str);
+		report_error(filename, line_no,
+			     "expected ')', got '%c'", **str);
 		goto err;
 	}
 	(*str)++;		// Get past closing paren
@@ -578,7 +578,8 @@ parse_nonpointer_type(char **str) {
 			}
 			eat_spaces(str);
 			if (**str != '=') {
-				report_error("expected '=', got '%c'", **str);
+				report_error(filename, line_no,
+					     "expected '=', got '%c'", **str);
 				goto err;
 			}
 			++(*str);
@@ -648,7 +649,8 @@ parse_nonpointer_type(char **str) {
 
 	default:
 		if (info->type == ARGTYPE_UNKNOWN) {
-			report_error("unknown type at '%s'", *str);
+			report_error(filename, line_no,
+				     "unknown type at '%s'", *str);
 			free(info);
 			return NULL;
 		} else {
@@ -683,6 +685,10 @@ process_line(char *buf) {
 	debug(3, "Reading line %d of `%s'", line_no, filename);
 	eat_spaces(&str);
 
+	/* A comment or empty line.  */
+	if (*str == '#' || *str == 0)
+		return NULL;
+
 	if (strncmp(str, "typedef", 7) == 0) {
 		parse_typedef(&str);
 		return NULL;
@@ -690,7 +696,7 @@ process_line(char *buf) {
 
 	Function *fun = calloc(1, sizeof(*fun));
 	if (fun == NULL) {
-		report_error("alloc function: %s", strerror(errno));
+		report_global_error("alloc function: %s", strerror(errno));
 		return NULL;
 	}
 
@@ -709,7 +715,7 @@ process_line(char *buf) {
 	eat_spaces(&str);
 	tmp = start_of_arg_sig(str);
 	if (tmp == NULL) {
-		report_error("syntax error");
+		report_error(filename, line_no, "syntax error");
 		goto err;
 	}
 	*tmp = '\0';
@@ -722,9 +728,8 @@ process_line(char *buf) {
 	fun->num_params = 0;
 	while (1) {
 		eat_spaces(&str);
-		if (*str == ')') {
+		if (*str == ')')
 			break;
-		}
 		if (str[0] == '+') {
 			fun->params_right++;
 			str++;
@@ -737,8 +742,8 @@ process_line(char *buf) {
 			void * na = realloc(fun->arg_info,
 					    sizeof(*fun->arg_info) * allocd);
 			if (na == NULL) {
-				report_error("(re)alloc params: %s",
-					     strerror(errno));
+				report_global_error("(re)alloc params: %s",
+						    strerror(errno));
 				goto err;
 			}
 
@@ -747,7 +752,8 @@ process_line(char *buf) {
 
 		arg_type_info *type = parse_type(&str);
 		if (type == NULL) {
-			report_error("unknown argument type");
+			report_error(filename, line_no,
+				     "unknown parameter type");
 			goto err;
 		}
 		fun->arg_info[fun->num_params++] = type;
@@ -761,7 +767,8 @@ process_line(char *buf) {
 		} else {
 			if (str[strlen(str) - 1] == '\n')
 				str[strlen(str) - 1] = '\0';
-			report_error("syntax error around \"%s\"", str);
+			report_error(filename, line_no,
+				     "syntax error before \"%s\"", str);
 			goto err;
 		}
 	}

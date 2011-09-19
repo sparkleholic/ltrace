@@ -7,6 +7,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include "common.h"
 
@@ -95,16 +96,58 @@ begin_of_line(enum tof type, Process *proc) {
 	}
 }
 
-/* The default prototype is: long X(long, long, long, long).  */
-static void
-build_default_prototype(Function *ret)
+static arg_type_info *
+build_unknown_type(void)
 {
-	static arg_type_info type_unknown = { ARGTYPE_UNKNOWN };
-	static arg_type_info * params[] = { &type_unknown, &type_unknown,
-					    &type_unknown, &type_unknown };
-	ret->return_info = &type_unknown;
+	arg_type_info *type_unknown = malloc(sizeof(*type_unknown));
+	if (type_unknown == NULL) {
+		report_global_error("malloc: %s", strerror(errno));
+		return NULL;
+	}
+
+	memset(type_unknown, 0, sizeof(*type_unknown));
+	type_unknown->type = ARGTYPE_UNKNOWN;
+	return type_unknown;
+}
+
+/* The default prototype is: long X(long, long, long, long).  This
+ * stuff gets freed.  We have to heap-allocate it.  */
+static Function *
+build_default_prototype()
+{
+	Function *ret = malloc(sizeof(*ret));
+	if (ret == NULL)
+		goto err;
+	memset(ret, 0, sizeof(*ret));
+
+	ret->return_info = build_unknown_type();
+	if (ret->return_info == NULL)
+		goto err;
+
 	ret->num_params = 4;
-	ret->arg_info = params;
+	ret->param_info = malloc(sizeof(*ret->param_info) * ret->num_params);
+	if (ret->param_info == NULL)
+		goto err;
+
+	memset(ret->param_info, 0, sizeof(*ret->param_info) * ret->num_params);
+
+	size_t i;
+	for (i = 0; i < ret->num_params; ++i) {
+		ret->param_info[i] = build_unknown_type();
+		if (ret->param_info[i] == NULL)
+			goto err;
+	}
+	return ret;
+
+err:
+	report_global_error("malloc: %s", strerror(errno));
+	if (ret->param_info != NULL)
+		for (i = 0; i < ret->num_params; ++i)
+			free(ret->param_info[i]);
+	free(ret->param_info);
+	free(ret->return_info);
+	free(ret);
+	return NULL;
 }
 
 static Function *
@@ -119,11 +162,11 @@ name2func(char *name) {
 			return tmp;
 	}
 
-	static Function def = { NULL };
-	if (def.name == NULL)
-		build_default_prototype(&def);
+	static Function *def = NULL;
+	if (def == NULL)
+		def = build_default_prototype();
 
-	return &def;
+	return def;
 }
 
 void
@@ -184,6 +227,8 @@ output_left(enum tof type, Process *proc, char *function_name) {
 #endif
 
 	func = name2func(function_name);
+	if (func == NULL)
+		return;
 
 	size_t i;
 	if (func->num_params > func->params_right) {
@@ -212,6 +257,9 @@ output_left(enum tof type, Process *proc, char *function_name) {
 void
 output_right(enum tof type, Process *proc, char *function_name) {
 	Function *func = name2func(function_name);
+	if (func == NULL)
+		return;
+
 	static arg_type_info *arg_unknown = NULL;
 	if (arg_unknown == NULL)
 	    arg_unknown = lookup_prototype(ARGTYPE_UNKNOWN);
@@ -316,4 +364,26 @@ output_right(enum tof type, Process *proc, char *function_name) {
 
 	current_proc = 0;
 	current_column = 0;
+}
+
+void
+report_error(char const *filename, unsigned line_no, char *fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	char buf[128];
+	vsnprintf(buf, sizeof(buf), fmt, args);
+	buf[sizeof(buf) - 1] = 0;
+	output_line(0, "%s:%d: error: %s\n", filename, line_no, buf);
+}
+
+void
+report_global_error(char *fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	char buf[128];
+	vsnprintf(buf, sizeof(buf), fmt, args);
+	buf[sizeof(buf) - 1] = 0;
+	output_line(0, "error: %s\n", buf);
 }
