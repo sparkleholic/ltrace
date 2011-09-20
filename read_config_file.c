@@ -821,7 +821,7 @@ token_follows_p(char **str, char *token, size_t len)
 }
 
 static arg_type_info *
-parse_inout_type(char **str)
+parse_inout_type(char **str, int *plusp)
 {
 	int is_in = 0;
 	int is_out = 0;
@@ -832,8 +832,11 @@ parse_inout_type(char **str)
 	(token_follows_p(STR, TOKEN, sizeof(TOKEN) - 1))
 
 	/* Parse in/out/inout modifier.  */
-	if (**str == '+') {
+	if (*plusp) {
 		is_out = 1;
+	} else if (**str == '+') {
+		is_out = 1;
+		*plusp = 1;
 		++*str;
 	} else if (TOKEN_FOLLOWS_P(str, "in")) {
 		is_in = 1;
@@ -908,6 +911,7 @@ process_line(char *buf) {
 
 	size_t allocd = 0;
 	fun->num_params = 0;
+	int plus = 0;
 	while (1) {
 		eat_spaces(&str);
 		if (*str == ')')
@@ -926,7 +930,7 @@ process_line(char *buf) {
 			fun->param_info = na;
 		}
 
-		arg_type_info *type = parse_inout_type(&str);
+		arg_type_info *type = parse_inout_type(&str, &plus);
 		if (type == NULL) {
 			report_error(filename, line_no,
 				     "unknown parameter type");

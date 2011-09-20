@@ -107,6 +107,7 @@ build_unknown_type(void)
 
 	memset(type_unknown, 0, sizeof(*type_unknown));
 	type_unknown->type = ARGTYPE_UNKNOWN;
+	type_unknown->is_in = 1;
 	return type_unknown;
 }
 
