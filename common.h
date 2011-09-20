@@ -61,9 +61,65 @@ enum arg_type {
 	ARGTYPE_COUNT		/* number of ARGTYPE_* values */
 };
 
+enum arg_expr_kind_t {
+	ARGEXPR_CONST,		/* Given number of elements.  */
+	ARGEXPR_REF,
+	ARGEXPR_ZERO,		/* Zero ('\0', 0, NULL) terminated array.  */
+};
+
+enum value_location_t {
+	VAL_LOC_ADDR,		/* Value is on this address in the client.  */
+	VAL_LOC_COPY,		/* Value was copied out of the client.  */
+	VAL_LOC_SHARED,		/* Like VAL_LOC_COPY, but don't free.  */
+	VAL_LOC_WORD,		/* Like VAL_LOC_COPY, but small enough.  */
+};
+
+typedef struct value_t value_t;
+struct value_t {
+	enum value_location_t where;
+	union {
+		void *address;	/* VAL_LOC_ADDR, VAL_LOC_COPY */
+		long value;	/* VAL_LOC_WORD */
+	} u;
+};
+
+typedef struct arg_expr_t arg_expr_t;
+struct arg_expr_t {
+	enum arg_expr_kind_t kind;
+	union {
+		/* ARGTYPE_CONST */
+		size_t value;
+
+		/* ARGTYPE_REF */
+		char const *ref_name;		/* Before translation.  */
+
+		/* After translation, we resolve the ref_name above to
+		 * a compound pointer:  */
+		struct {
+			/* Type of the referenced value.  */
+			struct arg_type_info_t *type;
+			/* Which function argument is it inside.  */
+			ssize_t arg;
+			/* Offset from the start of the*/
+			size_t off;
+		} ref;
+	} u;
+};
+
 typedef struct arg_type_info_t arg_type_info;
 struct arg_type_info_t {
 	enum arg_type type;
+
+	/* In/Out parameters.  This must be stored at the type,
+	 * because the output parameter can generally be buried in the
+	 * depths of structure.  */
+	int is_in : 1;		/* Input ("in") argument.  */
+	int is_out : 1;		/* Output ("out") argument.  */
+	int is_clone : 1;	/* Don't free _below_ this level.  */
+
+	arg_type_info *parent;
+
+	char *name;
 	union {
 		/* ARGTYPE_ENUM */
 		struct {
@@ -74,15 +130,21 @@ struct arg_type_info_t {
 
 		/* ARGTYPE_ARRAY */
 		struct {
-			struct arg_type_info_t * elt_type;
+			/* ARGTYPE_POINTER */
+			arg_type_info * type;
 			size_t elt_size;
-			int len_spec;
-		} array_info;
+			/* ARGTYPE_STRING_N */
+			arg_expr_t len_spec;
+		} info;
 
-		/* ARGTYPE_STRING_N */
+		/* ARGTYPE_INT et al */
 		struct {
-			int size_spec;
-		} string_n_info;
+			int size;	/* Size in bytes.  */
+			int sign;	/* Whether signed.  */
+		} num;
+
+		/* ARGTYPE_NUMFMT */
+		arg_expr_t numfmt_base;
 
 		/* ARGTYPE_STRUCT */
 		struct {
@@ -91,11 +153,6 @@ struct arg_type_info_t {
 			size_t num_fields;
 			size_t size;
 		} struct_info;
-
-		/* ARGTYPE_POINTER */
-		struct {
-			struct arg_type_info_t * info;
-		} ptr_info;
 	} u;
 };
 
@@ -113,7 +170,7 @@ struct Function {
 	const char * name;
 	arg_type_info * return_info;
 	size_t num_params;
-	arg_type_info ** arg_info;
+	arg_type_info ** param_info;
 	size_t params_right;
 	Function * next;
 };
@@ -144,6 +201,13 @@ struct callstack_element {
 	int is_syscall;
 	void * return_addr;
 	struct timeval time_spent;
+
+	/* Values saved on function call, for the case that the
+	 * function has any ARGTYPE_POST parameters.  */
+	value_t * args;
+
+	/* Arbitrary data stored by backend.
+	 * XXX check that backend has a chance to free.  */
 	void * arch_ptr;
 };
 

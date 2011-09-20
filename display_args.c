@@ -20,21 +20,18 @@ static size_t string_maxlength = INT_MAX;
 static size_t array_maxlength = INT_MAX;
 
 static long
-get_length(enum tof type, Process *proc, int len_spec,
-		       void *st, arg_type_info* st_info) {
-	long len;
-	arg_type_info info;
+get_length(enum tof type, Process *proc, arg_expr_t *expr,
+	   void *st, arg_type_info* st_info)
+{
+	switch (expr->kind) {
+	case ARGEXPR_CONST:
+		return expr->u.value;
 
-	if (len_spec > 0)
-		return len_spec;
-	if (type == LT_TOF_STRUCT) {
-		umovelong (proc, st + st_info->u.struct_info.offset[-len_spec-1],
-			   &len, st_info->u.struct_info.fields[-len_spec-1]);
-		return len;
+	case ARGEXPR_REF:
+	case ARGEXPR_ZERO:
+		break;
 	}
-
-	info.type = ARGTYPE_INT;
-	return gimme_arg(type, proc, -len_spec-1, &info);
+	assert (!"this argexpr kind is not yet implemented");
 }
 
 static int
@@ -43,7 +40,7 @@ display_ptrto(enum tof type, Process *proc, long item,
 			 void *st, arg_type_info* st_info) {
 	arg_type_info temp;
 	temp.type = ARGTYPE_POINTER;
-	temp.u.ptr_info.info = info;
+	temp.u.info.type = info;
 	return display_value(type, proc, item, &temp, st, st_info);
 }
 
@@ -66,12 +63,11 @@ display_arrayptr(enum tof type, Process *proc,
 	if (addr == NULL)
 		return fprintf(options.output, "NULL");
 
-	array_len = get_length(type, proc, info->u.array_info.len_spec,
-			st, st_info);
+	array_len = get_length(type, proc, &info->u.info.len_spec, st, st_info);
 	len += fprintf(options.output, "[ ");
 	for (i = 0; i < options.arraylen && i < array_maxlength && i < array_len; i++) {
-		arg_type_info *elt_type = info->u.array_info.elt_type;
-		size_t elt_size = info->u.array_info.elt_size;
+		arg_type_info *elt_type = info->u.info.type;
+		size_t elt_size = info->u.info.elt_size;
 		if (i != 0)
 			len += fprintf(options.output, ", ");
 		if (options.debug)
@@ -122,7 +118,7 @@ display_pointer(enum tof type, Process *proc, long value,
 			   arg_type_info * info,
 			   void *st, arg_type_info* st_info) {
 	long pointed_to;
-	arg_type_info *inner = info->u.ptr_info.info;
+	arg_type_info *inner = info->u.info.type;
 
 	if (inner->type == ARGTYPE_ARRAY) {
 		return display_arrayptr(type, proc, (void*) value, inner,
@@ -133,7 +129,7 @@ display_pointer(enum tof type, Process *proc, long value,
 		if (value == 0)
 			return fprintf(options.output, "NULL");
 		else if (umovelong (proc, (void *) value, &pointed_to,
-				    info->u.ptr_info.info) < 0)
+				    info->u.info.type) < 0)
 			return fprintf(options.output, "?");
 		else
 			return display_value(type, proc, pointed_to, inner,
@@ -222,7 +218,7 @@ display_value(enum tof type, Process *proc,
 	case ARGTYPE_STRING_N:
 		return display_string(type, proc, (void*) value,
 				      get_length(type, proc,
-						 info->u.string_n_info.size_spec, st, st_info));
+						 &info->u.info.len_spec, st, st_info));
 	case ARGTYPE_ARRAY:
 		return fprintf(options.output, "<array without address>");
 	case ARGTYPE_ENUM:

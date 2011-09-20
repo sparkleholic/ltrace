@@ -165,16 +165,37 @@ start_of_arg_sig(char *str) {
 }
 
 static int
-parse_int(char **str) {
+parse_int(char **str, long *ret)
+{
 	char *end;
 	long n = strtol(*str, &end, 0);
 	if (end == *str) {
-		report_error("bad number");
-		return 0;
+		report_error(filename, line_no, "bad number");
+		return -1;
 	}
 
 	*str = end;
-	return n;
+	if (ret != NULL)
+	    *ret = n;
+	return 0;
+}
+
+static int
+check_nonnegative(long l)
+{
+	if (l < 0) {
+		report_error(filename, line_no,
+			     "expected non-negative value, got %ld", l);
+		return -1;
+	}
+	return 0;
+}
+
+static void
+arg_expr_init_const(arg_expr_t *ret, size_t value)
+{
+	ret->kind = ARGEXPR_CONST;
+	ret->u.value = value;
 }
 
 /*
@@ -191,24 +212,29 @@ parse_int(char **str) {
  * < 0   (arg -n), counting from one
  */
 static int
-parse_argnum(char **str) {
-	int multiplier = 1;
-	int n = 0;
+parse_argnum(char **str, arg_expr_t *ret)
+{
+	if (isdigit(**str)) {
+		long l;
+		if (parse_int(str, &l) < 0
+		    || check_nonnegative(l) < 0)
+			return -1;
+		arg_expr_init_const(ret, (unsigned long)l);
 
-	if (strncmp(*str, "arg", 3) == 0) {
-		(*str) += 3;
-		multiplier = -1;
-	} else if (strncmp(*str, "elt", 3) == 0) {
-		(*str) += 3;
-		multiplier = -1;
-	} else if (strncmp(*str, "retval", 6) == 0) {
-		(*str) += 6;
-		return 0;
+	} else {
+		char *name = parse_ident(str);
+		if (name == NULL)
+			return -1;
+
+		if (strcmp(name, "zero") == 0) {
+			ret->kind = ARGEXPR_ZERO;
+		} else {
+			ret->kind = ARGEXPR_REF;
+			ret->u.ref_name = name;
+		}
 	}
 
-	n = parse_int(str);
-
-	return n * multiplier;
+	return 0;
 }
 
 struct typedef_node_t {
@@ -273,28 +299,49 @@ parse_typedef(char **str) {
 
 static size_t
 arg_sizeof(arg_type_info * arg) {
-	if (arg->type == ARGTYPE_CHAR) {
+	switch (arg->type) {
+	case ARGTYPE_CHAR:
 		return sizeof(char);
-	} else if (arg->type == ARGTYPE_SHORT || arg->type == ARGTYPE_USHORT) {
+	case ARGTYPE_SHORT:
+	case ARGTYPE_USHORT:
 		return sizeof(short);
-	} else if (arg->type == ARGTYPE_FLOAT) {
+	case ARGTYPE_INT:
+	case ARGTYPE_UINT:
+	case ARGTYPE_OCTAL:
+		return sizeof(int);
+	case ARGTYPE_LONG:
+	case ARGTYPE_ULONG:
+		return sizeof(long);
+	case ARGTYPE_FLOAT:
 		return sizeof(float);
-	} else if (arg->type == ARGTYPE_DOUBLE) {
+	case ARGTYPE_DOUBLE:
 		return sizeof(double);
-	} else if (arg->type == ARGTYPE_ENUM) {
+	case ARGTYPE_ENUM:
 		return sizeof(int);
-	} else if (arg->type == ARGTYPE_STRUCT) {
+	case ARGTYPE_STRUCT:
 		return arg->u.struct_info.size;
-	} else if (arg->type == ARGTYPE_POINTER) {
+
+	case ARGTYPE_ARRAY:
+		if (arg->u.info.len_spec.kind == ARGEXPR_CONST)
+			return arg->u.info.len_spec.u.value
+				* arg->u.info.elt_size;
+		/* fall-through */
+	case ARGTYPE_POINTER:
+	case ARGTYPE_ADDR:
+	case ARGTYPE_FILE:
+	case ARGTYPE_STRING:
+	case ARGTYPE_STRING_N:
+	case ARGTYPE_FORMAT:
 		return sizeof(void*);
-	} else if (arg->type == ARGTYPE_ARRAY) {
-		if (arg->u.array_info.len_spec > 0)
-			return arg->u.array_info.len_spec * arg->u.array_info.elt_size;
-		else
-			return sizeof(void *);
-	} else {
-		return sizeof(int);
-	}
+
+	case ARGTYPE_UNKNOWN:
+		assert (arg->type != ARGTYPE_UNKNOWN);
+	case ARGTYPE_VOID:
+		assert (arg->type != ARGTYPE_VOID);
+	case ARGTYPE_COUNT:
+		assert (arg->type != ARGTYPE_COUNT);
+	};
+	abort ();
 }
 
 #undef alignof
@@ -339,7 +386,7 @@ arg_align(arg_type_info * arg) {
 			return ptr_alignment;
 
 		case ARGTYPE_ARRAY:
-			return arg_align(&arg->u.array_info.elt_type[0]);
+			return arg_align(&arg->u.info.type[0]);
 
 		case ARGTYPE_STRUCT:
 			return arg_align(arg->u.struct_info.fields[0]);
@@ -388,49 +435,48 @@ destroy_type(arg_type_info *info)
 	if (info == NULL)
 		return;
 
-	switch (info->type) {
-	case ARGTYPE_ENUM:
-		free(info->u.enum_info.keys);
-		free(info->u.enum_info.values);
-		break;
+	if (!info->is_clone)
+		switch (info->type) {
+		case ARGTYPE_ENUM:
+			free(info->u.enum_info.keys);
+			free(info->u.enum_info.values);
+			break;
 
-	case ARGTYPE_STRUCT:
-		for (i = 0; i < info->u.struct_info.num_fields; ++i)
-			destroy_type(info->u.struct_info.fields[i]);
-		free(info->u.struct_info.fields);
-		free(info->u.struct_info.offset);
-		break;
+		case ARGTYPE_STRUCT:
+			for (i = 0; i < info->u.struct_info.num_fields; ++i)
+				destroy_type(info->u.struct_info.fields[i]);
+			free(info->u.struct_info.fields);
+			free(info->u.struct_info.offset);
+			break;
 
-	case ARGTYPE_ARRAY:
-		destroy_type(info->u.array_info.elt_type);
-		break;
+		case ARGTYPE_ARRAY:
+		case ARGTYPE_POINTER:
+			destroy_type(info->u.info.type);
+			break;
 
-	case ARGTYPE_POINTER:
-		destroy_type(info->u.ptr_info.info);
-		break;
+		case ARGTYPE_VOID:
+		case ARGTYPE_INT:
+		case ARGTYPE_UINT:
+		case ARGTYPE_LONG:
+		case ARGTYPE_ULONG:
+		case ARGTYPE_OCTAL:
+		case ARGTYPE_CHAR:
+		case ARGTYPE_SHORT:
+		case ARGTYPE_USHORT:
+		case ARGTYPE_FLOAT:
+		case ARGTYPE_DOUBLE:
+		case ARGTYPE_ADDR:
+		case ARGTYPE_FILE:
+		case ARGTYPE_FORMAT:
+		case ARGTYPE_STRING:
+		case ARGTYPE_STRING_N:
+			break;
 
-	case ARGTYPE_UNKNOWN:
-	case ARGTYPE_VOID:
-	case ARGTYPE_INT:
-	case ARGTYPE_UINT:
-	case ARGTYPE_LONG:
-	case ARGTYPE_ULONG:
-	case ARGTYPE_OCTAL:
-	case ARGTYPE_CHAR:
-	case ARGTYPE_SHORT:
-	case ARGTYPE_USHORT:
-	case ARGTYPE_FLOAT:
-	case ARGTYPE_DOUBLE:
-	case ARGTYPE_ADDR:
-	case ARGTYPE_FILE:
-	case ARGTYPE_FORMAT:
-	case ARGTYPE_STRING:
-	case ARGTYPE_STRING_N:
-	case ARGTYPE_COUNT:
-		/* Don't free, these are pointers to lookup table
-		 * above.  */
-		return;
-	}
+		case ARGTYPE_UNKNOWN:
+			assert(info->type != ARGTYPE_UNKNOWN);
+		case ARGTYPE_COUNT:
+			assert(info->type != ARGTYPE_COUNT);
+		}
 
 	free(info);
 }
@@ -443,7 +489,28 @@ destroy_fun(Function *fun)
 		return;
 	destroy_type(fun->return_info);
 	for (i = 0; i < fun->num_params; ++i)
-		destroy_type(fun->arg_info[i]);
+		destroy_type(fun->param_info[i]);
+}
+
+static int
+parse_array(char **str, arg_type_info *info)
+{
+	(*str)++;		// Get past open paren
+	eat_spaces(str);
+	if ((info->u.info.type = parse_type(str)) == NULL) {
+	err:
+		free(info);
+		return -1;
+	}
+	info->u.info.elt_size =
+		arg_sizeof(info->u.info.type);
+	(*str)++;		// Get past comma
+	eat_spaces(str);
+	int st = parse_argnum(str, &info->u.info.len_spec);
+	(*str)++;		// Get past close paren
+	if (st < 0)
+		goto err;
+	return 0;
 }
 
 static int
@@ -514,41 +581,109 @@ parse_struct(char **str, arg_type_info *info)
 	return 0;
 }
 
-static arg_type_info *
-parse_nonpointer_type(char **str) {
-	arg_type_info *simple;
-	arg_type_info *info;
+static int
+parse_string(char **str, arg_type_info *info)
+{
+	/* Backwards compatibility for string0, string1, ... */
+	if (isdigit(**str)) {
+		info->type = ARGTYPE_STRING_N;
 
-	simple = str2type(str);
-	if (simple->type == ARGTYPE_UNKNOWN) {
-		info = lookup_typedef(str);
-		if (info)
-			return info;
-		else
-			return simple;		// UNKNOWN
+		long l;
+		if (parse_int(str, &l) < 0
+		    || check_nonnegative(l) < 0) {
+		err:
+			destroy_type(info);
+			return -1;
+		}
+
+		char buf[23];
+		int len = snprintf(buf, sizeof buf, "arg%ld", l);
+		assert(len < (int)sizeof buf); /* 128-bit long??? */
+		if (len < 0) {
+			/* Um, what?  */
+			report_error(filename, line_no,
+				     "can't render name of aux arg");
+			goto err;
+		}
+
+		char *name = xstrndup(buf, len);
+		if (name == NULL)
+			goto err;
+
+		info->u.info.len_spec.kind = ARGEXPR_REF;
+		info->u.info.len_spec.u.ref_name = name;
+		return 0;
+
+	} else if (**str == '[') {
+		long l;
+
+		(*str)++;		// Skip past opening [
+		eat_spaces(str);
+
+		if (parse_int(str, &l) < 0
+		    || check_nonnegative(l) < 0)
+			goto err;
+
+		eat_spaces(str);
+		if (**str != ']') {
+			report_error(filename, line_no,
+				     "expected ']', got '%c'", **str);
+			goto err;
+		}
+		(*str)++;		// Skip past closing ]
+
+		arg_expr_init_const(&info->u.info.len_spec, (unsigned long)l);
+		return 0;
+
+	} else {
+		/* It was just a simple string after all.  */
+		return 0;
+	}
+}
+
+static arg_type_info *
+parse_nonpointer_type(char **str)
+{
+	int is_typedef = 0;
+	arg_type_info *simple = str2type(str);
+
+	if (simple == NULL) {
+		simple = lookup_typedef(str);
+		if (simple == NULL)
+			return NULL;
+		is_typedef = 1;
 	}
 
-	info = malloc(sizeof(*info));
+	/* XXX We used to do sharing of primitive types with the type
+	 * catalog above.  It's simpler to just malloc everything, so
+	 * that per-type is_in and is_out are easy to deal with, but
+	 * sharing is still possible in principle, at least for input
+	 * parameters, which will most likely be the majority.  */
+	arg_type_info *info = malloc(sizeof(*info));
+	if (info == NULL) {
+		report_global_error("malloc: %s", strerror(errno));
+		return NULL;
+	}
+
+	if (is_typedef) {
+		memcpy(info, simple, sizeof(*info));
+		info->is_clone = 1;
+		return info;
+	}
+
+	memset(info, 0, sizeof(*info));
 	info->type = simple->type;
 
 	/* Code to parse parameterized types will go into the following
 	   switch statement. */
 
 	switch (info->type) {
-
 	/* Syntax: array ( type, N|argN ) */
 	case ARGTYPE_ARRAY:
-		(*str)++;		// Get past open paren
-		eat_spaces(str);
-		if ((info->u.array_info.elt_type = parse_type(str)) == NULL)
+		if (parse_array(str, info) == 0)
+			return info;
+		else
 			return NULL;
-		info->u.array_info.elt_size =
-			arg_sizeof(info->u.array_info.elt_type);
-		(*str)++;		// Get past comma
-		eat_spaces(str);
-		info->u.array_info.len_spec = parse_argnum(str);
-		(*str)++;		// Get past close paren
-		return info;
 
 	/* Syntax: enum ( keyname=value,keyname=value,... ) */
 	case ARGTYPE_ENUM:{
@@ -584,7 +719,13 @@ parse_nonpointer_type(char **str) {
 			}
 			++(*str);
 			eat_spaces(str);
-			p->value = parse_int(str);
+
+			long l;
+			if (parse_int(str, &l) < 0
+			    || check_nonnegative(l) < 0)
+				goto err;
+			p->value = l;
+
 			p->next = list;
 			list = p;
 			++entries;
@@ -616,36 +757,17 @@ parse_nonpointer_type(char **str) {
 	}
 
 	case ARGTYPE_STRING:
-		if (!isdigit(**str) && **str != '[') {
-			/* Oops, was just a simple string after all */
-			free(info);
-			return simple;
-		}
-
-		info->type = ARGTYPE_STRING_N;
-
-		/* Backwards compatibility for string0, string1, ... */
-		if (isdigit(**str)) {
-			info->u.string_n_info.size_spec = -parse_int(str);
-			return info;
-		}
-
-		(*str)++;		// Skip past opening [
-		eat_spaces(str);
-		info->u.string_n_info.size_spec = parse_argnum(str);
-		eat_spaces(str);
-		(*str)++;		// Skip past closing ]
-		return info;
-
-	// Syntax: struct ( type,type,type,... )
-	case ARGTYPE_STRUCT: {
-		if (parse_struct(str, info) == 0)
+		if (parse_string(str, info) == 0)
 			return info;
 		else
 			return NULL;
 
-		}
-	}
+	// Syntax: struct ( type,type,type,... )
+	case ARGTYPE_STRUCT:
+		if (parse_struct(str, info) == 0)
+			return info;
+		else
+			return NULL;
 
 	default:
 		if (info->type == ARGTYPE_UNKNOWN) {
@@ -660,20 +782,82 @@ parse_nonpointer_type(char **str) {
 }
 
 static arg_type_info *
-parse_type(char **str) {
+parse_type(char **str)
+{
 	arg_type_info *info = parse_nonpointer_type(str);
+	if (info == NULL)
+		return NULL;
+
 	while (1) {
 		eat_spaces(str);
 		if (**str == '*') {
 			arg_type_info *outer = malloc(sizeof(*outer));
+			if (outer == NULL) {
+				destroy_type(info);
+				report_error(filename, line_no,
+					     "malloc: %s", strerror(errno));
+				return NULL;
+			}
 			outer->type = ARGTYPE_POINTER;
 			outer->u.info.type = info;
 			(*str)++;
 			info = outer;
+
 		} else
 			break;
 	}
 	return info;
+}
+
+static int
+token_follows_p(char **str, char *token, size_t len)
+{
+	if (strncmp(*str, token, len) == 0
+	    && !isalnum((*str)[len])) {
+		*str += len;
+		return 1;
+	}
+	return 0;
+}
+
+static arg_type_info *
+parse_inout_type(char **str)
+{
+	int is_in = 0;
+	int is_out = 0;
+
+	/* This macro assumes that TOKEN is a string literal.  That's
+	 * too fragile for general consumption, so keep it local.  */
+#define TOKEN_FOLLOWS_P(STR, TOKEN) \
+	(token_follows_p(STR, TOKEN, sizeof(TOKEN) - 1))
+
+	/* Parse in/out/inout modifier.  */
+	if (**str == '+') {
+		is_out = 1;
+		++*str;
+	} else if (TOKEN_FOLLOWS_P(str, "in")) {
+		is_in = 1;
+	} else if (TOKEN_FOLLOWS_P(str, "out")) {
+		is_out = 1;
+	} else if (TOKEN_FOLLOWS_P(str, "inout")) {
+		is_in = 1;
+		is_out = 1;
+	}
+#undef TOKEN_FOLLOWS_P
+
+	/* If unspecified, the default is 'in'.  */
+	if (!is_in && !is_out)
+		is_in = 1;
+	else
+		eat_spaces(str);
+
+	arg_type_info *type = parse_type(str);
+	if (type == NULL)
+		return NULL;
+
+	type->is_in = is_in;
+	type->is_out = is_out;
+	return type;
 }
 
 static Function *
@@ -701,14 +885,12 @@ process_line(char *buf) {
 	}
 
 	fun->return_info = parse_type(&str);
-	if (fun->return_info == NULL) {
+	if (fun->return_info == NULL
+	    || fun->return_info->type == ARGTYPE_UNKNOWN) {
 	err:
+		debug(3, " Skipping line %d", line_no);
 		destroy_fun(fun);
 		return NULL;
-	}
-	if (fun->return_info->type == ARGTYPE_UNKNOWN) {
-		debug(3, " Skipping line %d", line_no);
-		goto err;
 	}
 	debug(4, " return_type = %d", fun->return_info->type);
 
@@ -730,33 +912,28 @@ process_line(char *buf) {
 		eat_spaces(&str);
 		if (*str == ')')
 			break;
-		if (str[0] == '+') {
-			fun->params_right++;
-			str++;
-		} else if (fun->params_right) {
-			fun->params_right++;
-		}
 
 		if (fun->num_params >= allocd) {
 			allocd = allocd > 0 ? 2 * allocd : 8;
-			void * na = realloc(fun->arg_info,
-					    sizeof(*fun->arg_info) * allocd);
+			void * na = realloc(fun->param_info,
+					    sizeof(*fun->param_info) * allocd);
 			if (na == NULL) {
 				report_global_error("(re)alloc params: %s",
 						    strerror(errno));
 				goto err;
 			}
 
-			fun->arg_info = na;
+			fun->param_info = na;
 		}
 
-		arg_type_info *type = parse_type(&str);
+		arg_type_info *type = parse_inout_type(&str);
 		if (type == NULL) {
 			report_error(filename, line_no,
 				     "unknown parameter type");
 			goto err;
 		}
-		fun->arg_info[fun->num_params++] = type;
+
+		fun->param_info[fun->num_params++] = type;
 
 		eat_spaces(&str);
 		if (*str == ',') {
@@ -791,12 +968,9 @@ read_config_file(char *file) {
 
 	line_no = 0;
 	while (fgets(buf, 1024, stream)) {
-		Function *tmp;
+		Function *tmp = process_line(buf);
 
-		error_count = 0;
-		tmp = process_line(buf);
-
-		if (tmp) {
+		if (tmp != NULL) {
 			debug(2, "New function: `%s'", tmp->name);
 			tmp->next = list_of_functions;
 			list_of_functions = tmp;

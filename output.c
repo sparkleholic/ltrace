@@ -236,12 +236,12 @@ output_left(enum tof type, Process *proc, char *function_name) {
 		for (i = 0; i < max; i++) {
 			current_column +=
 				display_arg(type, proc, i,
-					    func->arg_info[i]);
+					    func->param_info[i]);
 			current_column += fprintf(options.output, ", ");
 		}
 
 		current_column +=
-		    display_arg(type, proc, i, func->arg_info[i]);
+		    display_arg(type, proc, i, func->param_info[i]);
 		if (func->params_right) {
 			current_column += fprintf(options.output, ", ");
 		}
@@ -318,12 +318,12 @@ output_right(enum tof type, Process *proc, char *function_name) {
 	for (i = func->num_params - func->params_right;
 	     i < func->num_params - 1; i++) {
 		current_column +=
-		    display_arg(type, proc, i, func->arg_info[i]);
+		    display_arg(type, proc, i, func->param_info[i]);
 		current_column += fprintf(options.output, ", ");
 	}
 	if (func->params_right) {
 		current_column +=
-		    display_arg(type, proc, i, func->arg_info[i]);
+		    display_arg(type, proc, i, func->param_info[i]);
 	}
 	current_column += fprintf(options.output, ") ");
 	tabto(options.align - 1);
