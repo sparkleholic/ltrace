@@ -171,7 +171,6 @@ struct Function {
 	arg_type_info * return_info;
 	size_t num_params;
 	arg_type_info ** param_info;
-	size_t params_right;
 	Function * next;
 };
 
@@ -281,7 +280,8 @@ extern Event * next_event(void);
 extern Process * pid2proc(pid_t pid);
 extern void handle_event(Event * event);
 extern void execute_program(Process *, char **);
-extern int display_arg(enum tof type, Process * proc, int arg_num, arg_type_info * info);
+extern int display_arg(enum tof type, Process * proc, int arg_num,
+		       arg_type_info * info, int output);
 extern Breakpoint * address2bpstruct(Process * proc, void * addr);
 extern void breakpoints_init(Process * proc);
 extern void insert_breakpoint(Process * proc, void * addr, struct library_symbol * libsym);

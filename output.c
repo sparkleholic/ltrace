@@ -232,27 +232,13 @@ output_left(enum tof type, Process *proc, char *function_name) {
 		return;
 
 	size_t i;
-	if (func->num_params > func->params_right) {
-		size_t max = func->num_params - func->params_right - 1;
-		for (i = 0; i < max; i++) {
-			current_column +=
-				display_arg(type, proc, i,
-					    func->param_info[i]);
+	for (i = 0; i < func->num_params; i++) {
+		if (i > 0)
 			current_column += fprintf(options.output, ", ");
-		}
-
-		current_column +=
-		    display_arg(type, proc, i, func->param_info[i]);
-		if (func->params_right) {
-			current_column += fprintf(options.output, ", ");
-		}
+		current_column += display_arg(type, proc, i,
+					      func->param_info[i], 0);
 	}
-
-	if (func->params_right
-	    || func->return_info->type == ARGTYPE_STRING_N
-	    || func->return_info->type == ARGTYPE_ARRAY) {
-		save_register_args(type, proc);
-	}
+	save_register_args(type, proc);
 }
 
 void
@@ -316,15 +302,11 @@ output_right(enum tof type, Process *proc, char *function_name) {
 	}
 
 	size_t i;
-	for (i = func->num_params - func->params_right;
-	     i < func->num_params - 1; i++) {
-		current_column +=
-		    display_arg(type, proc, i, func->param_info[i]);
-		current_column += fprintf(options.output, ", ");
-	}
-	if (func->params_right) {
-		current_column +=
-		    display_arg(type, proc, i, func->param_info[i]);
+	for (i = 0; i < func->num_params; i++) {
+		if (i > 0)
+			current_column += fprintf(options.output, ", ");
+		current_column += display_arg(type, proc, i,
+					      func->param_info[i], 1);
 	}
 	current_column += fprintf(options.output, ") ");
 	tabto(options.align - 1);
@@ -332,7 +314,7 @@ output_right(enum tof type, Process *proc, char *function_name) {
 	if (func->return_info->type == ARGTYPE_VOID) {
 		fprintf(options.output, "<void>");
 	} else {
-		display_arg(type, proc, -1, func->return_info);
+		display_arg(type, proc, -1, func->return_info, 1);
 	}
 
 	if (opt_T) {

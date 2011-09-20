@@ -12,12 +12,30 @@ static int display_string(enum tof type, Process *proc,
 			  void* addr, size_t maxlen);
 static int display_value(enum tof type, Process *proc,
 			 long value, arg_type_info *info,
-			 void *st, arg_type_info* st_info);
+			 void *st, arg_type_info* st_info,
+			 int output);
 static int display_unknown(enum tof type, Process *proc, long value);
 static int display_format(enum tof type, Process *proc, int arg_num);
 
 static size_t string_maxlength = INT_MAX;
 static size_t array_maxlength = INT_MAX;
+
+static int
+display_delayed(arg_type_info * info, int output)
+{
+	if (output)
+		return 0;
+	else
+		return fprintf(options.output, "~~~");
+}
+
+static int
+should_show(arg_type_info * info, int output)
+{
+	return (output && info->is_out)
+		|| (!output && info->is_in);
+}
+
 
 static long
 get_length(enum tof type, Process *proc, arg_expr_t *expr,
@@ -36,12 +54,14 @@ get_length(enum tof type, Process *proc, arg_expr_t *expr,
 
 static int
 display_ptrto(enum tof type, Process *proc, long item,
-			 arg_type_info * info,
-			 void *st, arg_type_info* st_info) {
+	      arg_type_info * info,
+	      void *st, arg_type_info* st_info,
+	      int output)
+{
 	arg_type_info temp;
 	temp.type = ARGTYPE_POINTER;
 	temp.u.info.type = info;
-	return display_value(type, proc, item, &temp, st, st_info);
+	return display_value(type, proc, item, &temp, st, st_info, output);
 }
 
 /*
@@ -54,8 +74,10 @@ display_ptrto(enum tof type, Process *proc, long item,
  */
 static int
 display_arrayptr(enum tof type, Process *proc,
-			    void *addr, arg_type_info * info,
-			    void *st, arg_type_info* st_info) {
+		 void *addr, arg_type_info * info,
+		 void *st, arg_type_info* st_info,
+		 int output)
+{
 	int len = 0;
 	size_t i;
 	size_t array_len;
@@ -73,7 +95,7 @@ display_arrayptr(enum tof type, Process *proc,
 		if (options.debug)
 			len += fprintf(options.output, "%p=", addr);
 		len += display_ptrto(type, proc, (long) addr,
-				     elt_type, st, st_info);
+				     elt_type, st, st_info, output);
 		addr += elt_size;
 	}
 	if (i < array_len)
@@ -87,7 +109,9 @@ display_arrayptr(enum tof type, Process *proc,
  */
 static int
 display_structptr(enum tof type, Process *proc,
-			     void *addr, arg_type_info * info) {
+		  void *addr, arg_type_info * info,
+		  int output)
+{
 	size_t i;
 	arg_type_info *field;
 	int len = 0;
@@ -106,7 +130,7 @@ display_structptr(enum tof type, Process *proc,
 						addr + info->u.struct_info.offset[i]);
 		len += display_ptrto(LT_TOF_STRUCT, proc,
 				     (long)addr + info->u.struct_info.offset[i],
-				     field, addr, info);
+				     field, addr, info, output);
 	}
 	len += fprintf(options.output, " }");
 
@@ -115,16 +139,19 @@ display_structptr(enum tof type, Process *proc,
 
 static int
 display_pointer(enum tof type, Process *proc, long value,
-			   arg_type_info * info,
-			   void *st, arg_type_info* st_info) {
+		arg_type_info * info,
+		void *st, arg_type_info* st_info,
+		int output)
+{
 	long pointed_to;
 	arg_type_info *inner = info->u.info.type;
 
 	if (inner->type == ARGTYPE_ARRAY) {
 		return display_arrayptr(type, proc, (void*) value, inner,
-				st, st_info);
+					st, st_info, output);
 	} else if (inner->type == ARGTYPE_STRUCT) {
-		return display_structptr(type, proc, (void *) value, inner);
+		return display_structptr(type, proc, (void *) value, inner,
+					 output);
 	} else {
 		if (value == 0)
 			return fprintf(options.output, "NULL");
@@ -133,7 +160,7 @@ display_pointer(enum tof type, Process *proc, long value,
 			return fprintf(options.output, "?");
 		else
 			return display_value(type, proc, pointed_to, inner,
-					st, st_info);
+					     st, st_info, output);
 	}
 }
 
@@ -162,9 +189,14 @@ display_enum(enum tof type, Process *proc,
 */
 int
 display_value(enum tof type, Process *proc,
-		long value, arg_type_info *info,
-		void *st, arg_type_info* st_info) {
+	      long value, arg_type_info *info,
+	      void *st, arg_type_info* st_info,
+	      int output)
+{
 	int tmp;
+
+	if (!should_show(info, output))
+		return display_delayed(info, output);
 
 	switch (info->type) {
 	case ARGTYPE_VOID:
@@ -227,7 +259,7 @@ display_value(enum tof type, Process *proc,
 		return fprintf(options.output, "<struct without address>");
 	case ARGTYPE_POINTER:
 		return display_pointer(type, proc, value, info,
-				       st, st_info);
+				       st, st_info, output);
 	case ARGTYPE_UNKNOWN:
 	default:
 		return display_unknown(type, proc, value);
@@ -235,16 +267,21 @@ display_value(enum tof type, Process *proc,
 }
 
 int
-display_arg(enum tof type, Process *proc, int arg_num, arg_type_info * info) {
+display_arg(enum tof type, Process *proc, int arg_num,
+	    arg_type_info * info, int output)
+{
 	long arg;
 
 	if (info->type == ARGTYPE_VOID) {
 		return 0;
 	} else if (info->type == ARGTYPE_FORMAT) {
-		return display_format(type, proc, arg_num);
+		if (should_show(info, output))
+			return display_format(type, proc, arg_num);
+		else
+			return display_delayed(info, output);
 	} else {
 		arg = gimme_arg(type, proc, arg_num, info);
-		return display_value(type, proc, arg, info, NULL, NULL);
+		return display_value(type, proc, arg, info, NULL, NULL, output);
 	}
 }
 
@@ -321,7 +358,8 @@ display_unknown(enum tof type, Process *proc, long value) {
 }
 
 static int
-display_format(enum tof type, Process *proc, int arg_num) {
+display_format(enum tof type, Process *proc, int arg_num)
+{
 	void *addr;
 	unsigned char *str1;
 	int i;

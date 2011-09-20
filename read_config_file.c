@@ -907,7 +907,6 @@ process_line(char *buf) {
 	fun->name = strdup(str);
 	str = tmp + 1;
 	debug(3, " name = %s", fun->name);
-	fun->params_right = 0;
 
 	size_t allocd = 0;
 	fun->num_params = 0;
