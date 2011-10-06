@@ -133,3 +133,13 @@ void func_call (char *x, char* y, void (*cb) (char *))
   cb (y);
   *x = (*y)++;
 }
+
+void func_str2(char *x, char* y, char *z, char *w, char *h)
+{
+  sleep (1);
+  *x = 'a';
+  *y = 'b';
+  *z = 'c';
+  *w = 'd';
+  *h = 'e';
+}

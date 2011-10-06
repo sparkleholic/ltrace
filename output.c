@@ -138,6 +138,10 @@ build_default_prototype()
 		if (ret->param_info[i] == NULL)
 			goto err;
 	}
+
+	ret->left_stop = ret->num_params;
+	ret->right_start = 0;
+
 	return ret;
 
 err:
@@ -171,9 +175,7 @@ name2func(char *name) {
 }
 
 void
-output_line(Process *proc, char *fmt, ...) {
-	va_list args;
-
+output_line_v(Process *proc, char *fmt, va_list ap) {
 	if (options.summary) {
 		return;
 	}
@@ -190,11 +192,18 @@ output_line(Process *proc, char *fmt, ...) {
 	}
 	begin_of_line(LT_TOF_NONE, proc);
 
-	va_start(args, fmt);
-	vfprintf(options.output, fmt, args);
+	vfprintf(options.output, fmt, ap);
 	fprintf(options.output, "\n");
-	va_end(args);
 	current_column = 0;
+}
+
+void
+output_line(Process * proc, char * fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	output_line_v(proc, fmt, args);
+	va_end(args);
 }
 
 static void
@@ -205,7 +214,8 @@ tabto(int col) {
 }
 
 void
-output_left(enum tof type, Process *proc, char *function_name) {
+output_left(enum tof type, Process *proc, char *function_name)
+{
 	Function *func;
 
 	if (options.summary) {
@@ -231,18 +241,24 @@ output_left(enum tof type, Process *proc, char *function_name) {
 	if (func == NULL)
 		return;
 
+	int emitted = 0;
 	size_t i;
-	for (i = 0; i < func->num_params; i++) {
-		if (i > 0)
+	for (i = 0; i < func->left_stop; i++) {
+		fprintf(options.output, "{%zd/%zd}", i, func->left_stop);
+		if (emitted)
 			current_column += fprintf(options.output, ", ");
-		current_column += display_arg(type, proc, i,
-					      func->param_info[i], 0);
+		emitted = display_arg(type, proc, i,
+				      func->param_info[i], 0);
+		if (emitted < 0)
+			return;
+		current_column += emitted;
 	}
 	save_register_args(type, proc);
 }
 
 void
-output_right(enum tof type, Process *proc, char *function_name) {
+output_right(enum tof type, Process *proc, char *function_name)
+{
 	Function *func = name2func(function_name);
 	if (func == NULL)
 		return;
@@ -301,12 +317,16 @@ output_right(enum tof type, Process *proc, char *function_name) {
 #endif
 	}
 
+	int emitted = func->left_stop != 0;
 	size_t i;
-	for (i = 0; i < func->num_params; i++) {
-		if (i > 0)
+	for (i = func->right_start; i < func->num_params; i++) {
+		if (emitted)
 			current_column += fprintf(options.output, ", ");
-		current_column += display_arg(type, proc, i,
-					      func->param_info[i], 1);
+		emitted = display_arg(type, proc, i,
+				      func->param_info[i], 1);
+		if (emitted < 0)
+			return;
+		current_column += emitted;
 	}
 	current_column += fprintf(options.output, ") ");
 	tabto(options.align - 1);

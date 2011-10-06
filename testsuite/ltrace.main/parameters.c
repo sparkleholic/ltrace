@@ -36,8 +36,9 @@ typedef enum {
 void func_enum(color_t);
 void func_typedef(color_t);
 
-void func_work (char *x);
-void func_call (char *x, char* y, void (*cb) (char *));
+void func_work(char *x);
+void func_call(char *x, char* y, void (*cb) (char *));
+void func_str2(char *x, char* y, char *z, char *w, char *h);
 
 int 
 main ()
@@ -125,6 +126,15 @@ main ()
     char x[10] = {};
     char y[10] = {};
     func_call (x, y, func_work);
+  }
+
+  {
+    char x[10] = {'0'};
+    char y[10] = {'1'};
+    char z[10] = {'2'};
+    char w[10] = {'3'};
+    char h[10] = {'4'};
+    func_str2(x, y, z, w, h);
   }
 
   return 0;

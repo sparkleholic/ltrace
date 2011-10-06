@@ -242,3 +242,79 @@ umovestr(Process *proc, void *addr, int len, void *laddr) {
 	*(char *)(laddr + offset) = '\0';
 	return 0;
 }
+
+#ifndef ARCH_HAVE_LOAD_ARGUMENTS
+/* Fall back to gimme_arg if the arch doesn't have dedicated argument
+   extraction.  */
+int
+arch_load_arguments(Process *proc, Function *func,
+		    value_t **values, size_t *nvalues)
+{
+	size_t i;
+	for (i = 0; i < func->num_params; ++i) {
+		//arg_type_info *arg_type = func->arg_info[i];
+		
+	}
+	return -1;
+}
+
+void
+arch_destroy_arguments(Function *func,
+		       value_t *values, size_t nvalues)
+{
+	size_t i;
+	for (i = 0; i < func->num_params; ++i)
+		if (values[i].where == VAL_LOC_COPY)
+			free(values[i].u.address);
+	free(values);
+}
+#endif
+
+#ifndef ARCH_HAVE_LOAD_RETVAL
+int
+arch_load_retval(Process *proc, Function *func, value_t **value)
+{
+	return -1;
+}
+
+void
+arch_destroy_retval(Function *func, value_t *value)
+{
+	if (value->where == VAL_LOC_COPY)
+		free(value->u.address);
+	free(value);
+}
+#endif
+
+int
+load_arguments(Process *proc, Function *func,
+	       value_t **values, size_t *nvalues)
+{
+	debug(DEBUG_PROCESS, "load_arguments: pid=%d fun=%s",
+	      proc->pid, func->name);
+	return arch_load_arguments(proc, func, values, nvalues);
+}
+
+void
+destroy_arguments(Function *func,
+		  value_t *values, size_t nvalues)
+{
+	debug(DEBUG_PROCESS, "destroy_arguments: fun=%s, nvalues=%zd",
+	      func->name, nvalues);
+	return arch_destroy_arguments(func, values, nvalues);
+}
+
+int
+load_retval(Process *proc, Function *func, value_t **value)
+{
+	debug(DEBUG_PROCESS, "load_retval: pid=%d fun=%s",
+	      proc->pid, func->name);
+	return arch_load_retval(proc, func, value);
+}
+
+void
+destroy_retval(Function *func, value_t *value)
+{
+	debug(DEBUG_PROCESS, "destroy_retval: fun=%s", func->name);
+	return arch_destroy_retval(func, value);
+}

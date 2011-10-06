@@ -12,6 +12,7 @@ static int line_no;
 static char *filename;
 
 static arg_type_info *parse_type(char **str);
+static arg_type_info *parse_inout_type(char **str, int *plusp);
 
 Function *list_of_functions = NULL;
 
@@ -90,6 +91,17 @@ str2type(char **name) {
 				return lookup_prototype(tmp->pt);
 			}
 		}
+	}
+	return NULL;
+}
+
+static const char *
+type2str(enum arg_type at)
+{
+	struct list_of_pt_t *tmp;
+	for (tmp = &list_of_pt[0]; tmp->name != NULL; ++tmp) {
+		if (tmp->pt == at)
+			return tmp->name;
 	}
 	return NULL;
 }
@@ -481,6 +493,124 @@ destroy_type(arg_type_info *info)
 	free(info);
 }
 
+__attribute__((unused)) static void
+dump_arg_expr(arg_expr_t *expr, FILE *stream)
+{
+	switch (expr->kind) {
+	case ARGEXPR_CONST:
+		fprintf(stream, "%ld", expr->u.value);
+		break;
+	case ARGEXPR_ZERO:
+		fputs("zero", stream);
+		break;
+	case ARGEXPR_REF:
+		abort();
+	}
+}
+
+__attribute__((unused)) static void
+dump_type(arg_type_info *info, FILE *stream)
+{
+	fprintf(stream, "<");
+	size_t i;
+	if (info->is_out) {
+		if (info->is_in)
+			fputs("inout ", stream);
+		else
+			fputs("out ", stream);
+	} else if (!info->is_in) {
+		fputs("??? ", stream);
+	}
+
+	switch (info->type) {
+	case ARGTYPE_ENUM: {
+		int expected_value = 0;
+		fprintf(stream, "enum(");
+		for (i = 0; i < info->u.enum_info.entries; ++i) {
+			if (i > 0)
+				fputc(',', stream);
+			fputs(info->u.enum_info.keys[i], stream);
+			int value = info->u.enum_info.values[i];
+			if (value != expected_value)
+				fprintf(stream, "=%d", value);
+			expected_value = value + 1;
+		}
+		fprintf(stream, ")");
+		break;
+	}
+
+	case ARGTYPE_STRUCT:
+		fprintf(stream, "struct(");
+		for (i = 0; i < info->u.struct_info.num_fields; ++i) {
+			if (i > 0)
+				fputc(',', stream);
+			dump_type(info->u.struct_info.fields[i], stream);
+		}
+		fprintf(stream, ")");
+		break;
+
+	case ARGTYPE_ARRAY:
+		fprintf(stream, "array(");
+		dump_type(info->u.info.type, stream);
+		fputc(',', stream);
+		dump_arg_expr(&info->u.info.len_spec, stream);
+		fprintf(stream, ")");
+		break;
+
+	case ARGTYPE_POINTER:
+		dump_type(info->u.info.type, stream);
+		fputc('*', stream);
+		break;
+
+	case ARGTYPE_VOID:
+	case ARGTYPE_INT:
+	case ARGTYPE_UINT:
+	case ARGTYPE_LONG:
+	case ARGTYPE_ULONG:
+	case ARGTYPE_OCTAL:
+	case ARGTYPE_CHAR:
+	case ARGTYPE_SHORT:
+	case ARGTYPE_USHORT:
+	case ARGTYPE_FLOAT:
+	case ARGTYPE_DOUBLE:
+	case ARGTYPE_ADDR:
+	case ARGTYPE_FILE:
+	case ARGTYPE_FORMAT:
+	case ARGTYPE_STRING:
+		fputs(type2str(info->type), stream);
+		break;
+
+	case ARGTYPE_STRING_N:
+		fputs(type2str(info->type), stream);
+		fputc('[', stream);
+		dump_arg_expr(&info->u.info.len_spec, stream);
+		fputc(']', stream);
+		break;
+
+	case ARGTYPE_UNKNOWN:
+		fputs("???", stream);
+		break;
+
+	case ARGTYPE_COUNT:
+		assert(info->type != ARGTYPE_COUNT);
+	}
+	fprintf(stream, ">");
+}
+
+__attribute__((unused)) static void
+dump_function(Function *fun, FILE *stream)
+{
+	size_t i;
+	dump_type(fun->return_info, stream);
+	fprintf(stream, " %s(", fun->name);
+	for (i = 0; i < fun->num_params; ++i) {
+		if (i > 0)
+			fputc(',', stream);
+		dump_type(fun->param_info[i], stream);
+	}
+	fputs(")\n", stream);
+}
+
 static void
 destroy_fun(Function *fun)
 {
@@ -493,15 +623,31 @@ destroy_fun(Function *fun)
 }
 
 static int
+check_internal_plus(int plus)
+{
+	if (plus != 0) {
+		report_error(filename, line_no,
+			     "'+' not allowed at internal members");
+		return -1;
+	}
+	return 0;
+}
+
+/* Syntax: array ( type, N|argN ) */
+static int
 parse_array(char **str, arg_type_info *info)
 {
 	(*str)++;		// Get past open paren
 	eat_spaces(str);
-	if ((info->u.info.type = parse_type(str)) == NULL) {
+	int plus = 0;
+	if ((info->u.info.type = parse_inout_type(str, &plus)) == NULL) {
 	err:
 		free(info);
 		return -1;
 	}
+	if (check_internal_plus(plus) < 0)
+		goto err;
+
 	info->u.info.elt_size =
 		arg_sizeof(info->u.info.type);
 	(*str)++;		// Get past comma
@@ -556,8 +702,11 @@ parse_struct(char **str, arg_type_info *info)
 			info->SI.offset = no;
 		}
 
-		arg_type_info *type = parse_type(str);
+		int plus = 0;
+		arg_type_info *type = parse_inout_type(str, &plus);
 		if (type == NULL)
+			goto err;
+		if (check_internal_plus(plus) < 0)
 			goto err;
 		info->SI.fields[info->SI.num_fields++] = type;
 
@@ -678,7 +827,6 @@ parse_nonpointer_type(char **str)
 	   switch statement. */
 
 	switch (info->type) {
-	/* Syntax: array ( type, N|argN ) */
 	case ARGTYPE_ARRAY:
 		if (parse_array(str, info) == 0)
 			return info;
@@ -798,6 +946,7 @@ parse_type(char **str)
 					     "malloc: %s", strerror(errno));
 				return NULL;
 			}
+			memset(outer, 0, sizeof(*outer));
 			outer->type = ARGTYPE_POINTER;
 			outer->u.info.type = info;
 			(*str)++;
@@ -820,16 +969,35 @@ token_follows_p(char **str, char *token, size_t len)
 	return 0;
 }
 
+static int
+parse_opt_inout(char **str, int *is_inp, int *is_outp)
+{
+	/* This macro assumes that TOKEN is a string literal.  That's
+	 * too fragile for general consumption, so keep it local.  */
+#define TOKEN_FOLLOWS_P(STR, TOKEN) \
+	(token_follows_p(STR, TOKEN, sizeof(TOKEN) - 1))
+
+	if (TOKEN_FOLLOWS_P(str, "in")) {
+		*is_inp = 1;
+	} else if (TOKEN_FOLLOWS_P(str, "out")) {
+		*is_outp = 1;
+	} else if (TOKEN_FOLLOWS_P(str, "inout")) {
+		*is_inp = 1;
+		*is_outp = 1;
+	} else {
+		return 0;
+	}
+
+#undef TOKEN_FOLLOWS_P
+
+	return 1;
+}
+
 static arg_type_info *
 parse_inout_type(char **str, int *plusp)
 {
 	int is_in = 0;
 	int is_out = 0;
-
-	/* This macro assumes that TOKEN is a string literal.  That's
-	 * too fragile for general consumption, so keep it local.  */
-#define TOKEN_FOLLOWS_P(STR, TOKEN) \
-	(token_follows_p(STR, TOKEN, sizeof(TOKEN) - 1))
 
 	/* Parse in/out/inout modifier.  */
 	if (*plusp) {
@@ -838,15 +1006,9 @@ parse_inout_type(char **str, int *plusp)
 		is_out = 1;
 		*plusp = 1;
 		++*str;
-	} else if (TOKEN_FOLLOWS_P(str, "in")) {
-		is_in = 1;
-	} else if (TOKEN_FOLLOWS_P(str, "out")) {
-		is_out = 1;
-	} else if (TOKEN_FOLLOWS_P(str, "inout")) {
-		is_in = 1;
-		is_out = 1;
+	} else {
+		parse_opt_inout(str, &is_in, &is_out);
 	}
-#undef TOKEN_FOLLOWS_P
 
 	/* If unspecified, the default is 'in'.  */
 	if (!is_in && !is_out)
@@ -895,6 +1057,7 @@ process_line(char *buf) {
 		destroy_fun(fun);
 		return NULL;
 	}
+	fun->return_info->is_out = 1;
 	debug(4, " return_type = %d", fun->return_info->type);
 
 	eat_spaces(&str);
@@ -953,6 +1116,20 @@ process_line(char *buf) {
 		}
 	}
 
+	/* Determine the left stop and the right start.  */
+	fun->left_stop = fun->num_params;
+	while (fun->left_stop > 0
+	       && !fun->param_info[fun->left_stop - 1]->is_in)
+		fun->left_stop--;
+
+	fun->right_start = 0;
+	while (fun->right_start < fun->num_params
+	       && !fun->param_info[fun->right_start]->is_out)
+		fun->right_start++;
+
+	fprintf (stderr, "%s %zd %zd\n", fun->name,
+		 fun->left_stop, fun->right_start);
+
 	return fun;
 }
 
@@ -974,6 +1151,7 @@ read_config_file(char *file) {
 		Function *tmp = process_line(buf);
 
 		if (tmp != NULL) {
+			dump_function(tmp, stderr);
 			debug(2, "New function: `%s'", tmp->name);
 			tmp->next = list_of_functions;
 			list_of_functions = tmp;

@@ -112,9 +112,9 @@ struct arg_type_info_t {
 
 	/* In/Out parameters.  This must be stored at the type,
 	 * because the output parameter can generally be buried in the
-	 * depths of structure.  */
-	int is_in : 1;		/* Input ("in") argument.  */
-	int is_out : 1;		/* Output ("out") argument.  */
+	 * depths of a structure.  */
+	int is_in : 1;		/* Input ("in", "inout") argument.  */
+	int is_out : 1;		/* Output ("out", "inout") argument.  */
 	int is_clone : 1;	/* Don't free _below_ this level.  */
 
 	arg_type_info *parent;
@@ -171,6 +171,11 @@ struct Function {
 	arg_type_info * return_info;
 	size_t num_params;
 	arg_type_info ** param_info;
+	size_t left_stop;	/* As an optimization, this is where
+				 * the output of "in" arguments should
+				 * stop, because there are no more
+				 * "in" arguments ahead.  */
+	size_t right_start;	/* The opposite.  */
 	Function * next;
 };
 
@@ -331,6 +336,24 @@ extern int ffcheck(void * maddr);
 extern void * sym2addr(Process *, struct library_symbol *);
 extern int linkmap_init(Process *, struct ltelf *);
 extern void arch_check_dbg(Process *proc);
+
+/* This callback should create and fill the array VALUES.  The array
+ * is to be long enough to hold all arguments.  The length is passed
+ * back by way of NVALUES.  The function returns 0 for success and
+ * value smaller than 0 when an error occurs.  */
+extern int load_arguments(Process *proc, Function *func,
+			  value_t **values, size_t *nvalues);
+
+/* This should free any data allocated by load_values.  */
+extern void destroy_arguments(Function *func,
+			      value_t *values, size_t nvalues);
+
+/* Like load_arguments, but fetches return value upon function
+ * return.  */
+extern int load_retval(Process *proc, Function *func, value_t **value);
+
+/* Like destroy_arguments, but for return value.  */
+extern void destroy_retval(Function *func, value_t *value);
 
 extern struct ltelf main_lte;
 
