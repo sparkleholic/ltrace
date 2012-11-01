@@ -51,7 +51,8 @@ static struct arg_type_info *parse_type(char **str, struct param **extra_param,
 					size_t param_num, int *ownp);
 static struct arg_type_info *parse_lens(char **str, struct param **extra_param,
 					size_t param_num, int *ownp);
-static int parse_enum(char **str, struct arg_type_info **retp, int *ownp);
+static int parse_enum(char **str, enum enum_lens_type et,
+		      struct arg_type_info **retp, int *ownp);
 
 Function *list_of_functions = NULL;
 
@@ -650,8 +651,10 @@ parse_alias(char **str, struct arg_type_info **retp, int *ownp,
 		return build_printf_pack(extra_param, param_num);
 
 	} else if (try_parse_kwd(str, "enum") >=0) {
+		return parse_enum(str, ELT_ENUM, retp, ownp);
 
-		return parse_enum(str, retp, ownp);
+	} else if (try_parse_kwd(str, "flags") >= 0) {
+		return parse_enum(str, ELT_FLAGS, retp, ownp);
 
 	} else {
 		*retp = NULL;
@@ -699,7 +702,8 @@ parse_array(char **str, struct arg_type_info *info)
  *   enum<type> (keyname[=value],keyname[=value],... )
  */
 static int
-parse_enum(char **str, struct arg_type_info **retp, int *ownp)
+parse_enum(char **str, enum enum_lens_type et,
+	   struct arg_type_info **retp, int *ownp)
 {
 	/* Optional type argument.  */
 	eat_spaces(str);
@@ -747,7 +751,7 @@ parse_enum(char **str, struct arg_type_info **retp, int *ownp)
 		return -1;
 	}
 
-	lens_init_enum(lens);
+	lens_init_enum(lens, et);
 	(*retp)->lens = &lens->super;
 	(*retp)->own_lens = 1;
 

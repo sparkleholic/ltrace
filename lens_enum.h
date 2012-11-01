@@ -24,13 +24,19 @@
 #include "lens.h"
 #include "vect.h"
 
+enum enum_lens_type {
+	ELT_ENUM,
+	ELT_FLAGS,
+};
+
 struct enum_lens {
 	struct lens super;
 	struct vect entries;
+	enum enum_lens_type et;
 };
 
-/* Init enumeration LENS.  */
-void lens_init_enum(struct enum_lens *lens);
+/* Init enumeration LENS of type ET.  */
+void lens_init_enum(struct enum_lens *lens, enum enum_lens_type et);
 
 /* Push another member of the enumeration, named KEY, with given
  * VALUE.  If OWN_KEY, KEY is owned and released after the type is

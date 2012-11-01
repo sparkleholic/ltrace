@@ -117,6 +117,11 @@ int value_init_deref(struct value *ret_val, struct value *valp);
  * success or negative value for failure.  */
 int value_reify(struct value *val, struct value_dict *arguments);
 
+/* If VAL is VAL_LOC_SHARED, convert it to VAL_LOC_COPY.  Otherwise
+ * leave it alone.  Return 0 on success or a negative value on
+ * failure.  */
+int value_unshare(struct value *val);
+
 /* Return a pointer to the data of the value.  This copies the data
  * from the inferior to the tracer.  Returns NULL on failure.  */
 unsigned char *value_get_data(struct value *val, struct value_dict *arguments);

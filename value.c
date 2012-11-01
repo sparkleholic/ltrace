@@ -185,23 +185,36 @@ value_get_raw_data(struct value *val)
 	abort();
 }
 
+static int
+clone_buffer(struct value *val, unsigned char *buf)
+{
+	assert(val->inferior != NULL);
+	size_t size = type_sizeof(val->inferior, val->type);
+	if (size == (size_t)-1)
+		return -1;
+
+	val->u.address = malloc(size);
+	if (val->u.address == NULL)
+		return -1;
+
+	memcpy(val->u.address, buf, size);
+	return 0;
+}
+
 int
 value_clone(struct value *retp, struct value *val)
 {
 	*retp = *val;
-	if (val->where == VAL_LOC_COPY) {
-		assert(val->inferior != NULL);
-		size_t size = type_sizeof(val->inferior, val->type);
-		if (size == (size_t)-1)
-			return -1;
+	if (val->where == VAL_LOC_COPY)
+		return clone_buffer(retp, val->u.address);
+	return 0;
+}
 
-		retp->u.address = malloc(size);
-		if (retp->u.address == NULL)
-			return -1;
-
-		memcpy(retp->u.address, val->u.address, size);
-	}
-
+int
+value_unshare(struct value *val)
+{
+	if (val->where == VAL_LOC_SHARED)
+		return clone_buffer(val, val->u.address);
 	return 0;
 }
 

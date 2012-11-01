@@ -117,28 +117,140 @@ enum_get(struct enum_lens *lens, struct value *value,
 	return NULL;
 }
 
+const int
+flags_next(struct enum_lens *lens, struct value *value,
+	   struct value_dict *arguments, const char **retp)
+{
+	size_t i;
+	for (i = 0; i < vect_size(&lens->entries); ++i) {
+		struct enum_entry *entry = VECT_ELEMENT(&lens->entries,
+							struct enum_entry, i);
+		unsigned char *v = value_get_data(value, arguments);
+		size_t v_sz = value_size(value, arguments);
+		if (v == NULL || v_sz == (size_t)-1)
+			return -1;
+
+		const unsigned char *mask
+			= value_get_data(entry->value, arguments);
+		size_t mask_sz = value_size(entry->value, arguments);
+		if (mask == NULL || mask_sz == (size_t)-1)
+			return -1;
+
+		size_t sz = v_sz < mask_sz ? v_sz : mask_sz;
+
+		/* The following doesn't work well with cross-tracing
+		 * on one of the endians.  What's intended is:
+		 *  |   value   |
+		 *       | mask |
+		 *
+		 * What we are doing is:
+		 *  |   value   |
+		 *  | mask |
+		 */
+		size_t j;
+		int mismatch = 0;
+		for (j = 0; j < sz; ++j) {
+			unsigned char m = mask[j];
+			if ((m & v[j]) != m) {
+				mismatch = 1;
+				break;
+			}
+		}
+		/* This takes care of the following scenario:
+		 *  | value |
+		 *  |    mask   |
+		 */
+		for (j = sz; j < mask_sz; ++j) {
+			if (mask[j] != 0) {
+				mismatch = 1;
+				break;
+			}
+		}
+
+		if (mismatch)
+			continue;
+
+		for (j = 0; j < sz; ++j)
+			v[j] &= ~mask[j];
+		*retp = entry->key;
+		return 0;
+	}
+
+	*retp = NULL;
+	return 0;
+}
+
 static int
 enum_lens_format_cb(struct lens *lens, FILE *stream,
 		    struct value *value, struct value_dict *arguments)
 {
 	struct enum_lens *self = (void *)lens;
 
-	const char *name = enum_get(self, value, arguments);
-	if (name != NULL)
-		return fprintf(stream, "%s", name);
+	if (self->et == ELT_ENUM) {
+		const char *name = enum_get(self, value, arguments);
+		if (name != NULL)
+			return fprintf(stream, "%s", name);
+		return lens_format(&default_lens, stream, value, arguments);
 
-	return lens_format(&default_lens, stream, value, arguments);
+	} else {
+		assert(self->et == ELT_FLAGS);
+
+		/* We will need to reify and unshare later anyway, and
+		 * semantically no harm is done if originals are
+		 * modified instead.  */
+		if (value_reify(value, arguments) < 0
+		    || value_unshare(value) < 0)
+			return -1;
+
+		/* Now we clone so that we can modify the value.  */
+		struct value copy;
+		if (value_clone(&copy, value) < 0)
+			return -1;
+
+		int o = 0;
+		while (!value_is_zero(&copy, arguments)) {
+			const char *name;
+			if (flags_next(self, &copy, arguments, &name) < 0) {
+			fail:
+				value_destroy(&copy);
+				return -1;
+			}
+			if (name == NULL)
+				break;
+
+			/* Emit a divider if we've written
+			 * anything...  */
+			if (o > 0) {
+				int rc = fprintf(stream, "|");
+				if (rc < 0)
+					goto fail;
+				o += rc;
+			}
+
+			int rc = fprintf(stream, "%s", name);
+			if (rc < 0)
+				goto fail;
+			o += rc;
+		}
+
+		int rc = lens_format(&default_lens, stream, &copy, arguments);
+		value_destroy(&copy);
+		if (rc < 0)
+			return -1;
+		return o + rc;
+	}
 }
 
 
 void
-lens_init_enum(struct enum_lens *lens)
+lens_init_enum(struct enum_lens *lens, enum enum_lens_type et)
 {
 	*lens = (struct enum_lens){
-		{
+		.super = {
 			.format_cb = enum_lens_format_cb,
 			.destroy_cb = enum_lens_destroy_cb,
 		},
+		.et = et,
 	};
 	VECT_INIT(&lens->entries, struct enum_entry);
 }
