@@ -93,7 +93,8 @@ address2bpstruct(Process *proc, void *addr)
 	assert(proc != NULL);
 	assert(proc->breakpoints != NULL);
 	assert(proc->leader == proc);
-	debug(DEBUG_FUNCTION, "address2bpstruct(pid=%d, addr=%p)", proc->pid, addr);
+	debug(DEBUG_FUNCTION, "address2bpstruct(pid=%ld, addr=%p)",
+	      (long)proc->pid, addr);
 	return dict_find_entry(proc->breakpoints, addr);
 }
 
@@ -206,8 +207,8 @@ insert_breakpoint(struct Process *proc, void *addr,
 	assert(leader != NULL);
 	assert(leader->breakpoints != NULL);
 
-	debug(DEBUG_FUNCTION, "insert_breakpoint(pid=%d, addr=%p, symbol=%s)",
-	      proc->pid, addr, libsym ? libsym->name : "NULL");
+	debug(DEBUG_FUNCTION, "insert_breakpoint(pid=%ld, addr=%p, symbol=%s)",
+	      (long)proc->pid, addr, libsym ? libsym->name : "NULL");
 
 	assert(addr != 0);
 
@@ -245,7 +246,8 @@ insert_breakpoint(struct Process *proc, void *addr,
 void
 delete_breakpoint(Process *proc, void *addr)
 {
-	debug(DEBUG_FUNCTION, "delete_breakpoint(pid=%d, addr=%p)", proc->pid, addr);
+	debug(DEBUG_FUNCTION, "delete_breakpoint(pid=%ld, addr=%p)",
+	      (long)proc->pid, addr);
 
 	Process * leader = proc->leader;
 	assert(leader != NULL);
@@ -285,7 +287,8 @@ breakpoint_library(const struct breakpoint *bp)
 static void
 enable_bp_cb(void *addr, void *sbp, void *proc)
 {
-	debug(DEBUG_FUNCTION, "enable_bp_cb(pid=%d)", ((Process *)proc)->pid);
+	debug(DEBUG_FUNCTION, "enable_bp_cb(pid=%ld)",
+	      (long)((Process *)proc)->pid);
 	if (((struct breakpoint *)sbp)->enabled)
 		enable_breakpoint(proc, sbp);
 }
@@ -293,9 +296,9 @@ enable_bp_cb(void *addr, void *sbp, void *proc)
 void
 enable_all_breakpoints(Process *proc)
 {
-	debug(DEBUG_FUNCTION, "enable_all_breakpoints(pid=%d)", proc->pid);
+	debug(DEBUG_FUNCTION, "enable_all_breakpoints(pid=%ld)",
+	      (long)proc->pid);
 
-	debug(1, "Enabling breakpoints for pid %u...", proc->pid);
 	if (proc->breakpoints) {
 		dict_apply_to_all(proc->breakpoints, enable_bp_cb,
 				  proc);
@@ -305,14 +308,16 @@ enable_all_breakpoints(Process *proc)
 static void
 disable_bp_cb(void *addr, void *sbp, void *proc)
 {
-	debug(DEBUG_FUNCTION, "disable_bp_cb(pid=%d)", ((Process *)proc)->pid);
+	debug(DEBUG_FUNCTION, "disable_bp_cb(pid=%ld)",
+	      (long)((Process *)proc)->pid);
 	if (((struct breakpoint *)sbp)->enabled)
 		disable_breakpoint(proc, sbp);
 }
 
 void
 disable_all_breakpoints(Process *proc) {
-	debug(DEBUG_FUNCTION, "disable_all_breakpoints(pid=%d)", proc->pid);
+	debug(DEBUG_FUNCTION, "disable_all_breakpoints(pid=%ld)",
+	      (long)proc->pid);
 	assert(proc->leader == proc);
 	dict_apply_to_all(proc->breakpoints, disable_bp_cb, proc);
 }
@@ -362,7 +367,7 @@ entry_breakpoint_init(struct Process *proc,
 int
 breakpoints_init(Process *proc)
 {
-	debug(DEBUG_FUNCTION, "breakpoints_init(pid=%d)", proc->pid);
+	debug(DEBUG_FUNCTION, "breakpoints_init(pid=%ld)", (long)proc->pid);
 
 	/* XXX breakpoint dictionary should be initialized
 	 * outside.  Here we just put in breakpoints.  */
@@ -399,8 +404,9 @@ breakpoints_init(Process *proc)
 	    || (entry_breakpoint_init(proc, entry_bp,
 				      lib->entry, lib)) < 0) {
 		fprintf(stderr,
-			"Couldn't initialize entry breakpoint for PID %d.\n"
-			"Some tracing events may be missed.\n", proc->pid);
+			"Couldn't initialize entry breakpoint for PID %ld.\n"
+			"Some tracing events may be missed.\n",
+			(long)proc->pid);
 		free(entry_bp);
 
 	} else {

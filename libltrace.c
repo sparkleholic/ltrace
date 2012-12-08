@@ -49,7 +49,8 @@ stop_non_p_processes(Process *proc, void *data)
 	for (it = opt_p; it != NULL; it = it->next) {
 		Process * p_proc = pid2proc(it->pid);
 		if (p_proc == NULL) {
-			printf("stop_non_p_processes: %d terminated?\n", it->pid);
+			printf("stop_non_p_processes: %ld terminated?\n",
+			       (long)it->pid);
 			continue;
 		}
 		if (p_proc == proc || p_proc->leader == proc->leader) {
@@ -59,7 +60,7 @@ stop_non_p_processes(Process *proc, void *data)
 	}
 
 	if (stop) {
-		debug(2, "Sending SIGSTOP to process %u", proc->pid);
+		debug(2, "Sending SIGSTOP to process %ld", (long)proc->pid);
 		kill(proc->pid, SIGSTOP);
 	}
 

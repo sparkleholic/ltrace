@@ -73,9 +73,11 @@ begin_of_line(Process *proc, int is_func, int indent)
 		return;
 	}
 	if ((options.output != stderr) && (opt_p || options.follow)) {
-		current_column += fprintf(options.output, "%u ", proc->pid);
+		current_column += fprintf(options.output,
+					  "%ld ", (long)proc->pid);
 	} else if (options.follow) {
-		current_column += fprintf(options.output, "[pid %u] ", proc->pid);
+		current_column += fprintf(options.output,
+					  "[pid %ld] ", (long)proc->pid);
 	}
 	if (opt_r) {
 		struct timeval tv;

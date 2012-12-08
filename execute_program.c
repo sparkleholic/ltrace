@@ -117,6 +117,6 @@ execute_program(const char * command, char **argv)
 	if (wait_for_proc(pid) < 0)
 		goto fail;
 
-	debug(1, "PID=%d", pid);
+	debug(1, "PID=%ld", (long)pid);
 	return pid;
 }

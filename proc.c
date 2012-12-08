@@ -165,8 +165,8 @@ static int
 process_init_main(struct Process *proc)
 {
 	if (breakpoints_init(proc) < 0) {
-		fprintf(stderr, "failed to init breakpoints %d\n",
-			proc->pid);
+		fprintf(stderr, "failed to init breakpoints %ld\n",
+			(long)proc->pid);
 		return -1;
 	}
 
@@ -178,8 +178,8 @@ process_init(struct Process *proc, const char *filename, pid_t pid)
 {
 	if (process_bare_init(proc, filename, pid, 0) < 0) {
 	fail:
-		fprintf(stderr, "failed to initialize process %d: %s\n",
-			pid, strerror(errno));
+		fprintf(stderr, "failed to initialize process %ld: %s\n",
+			(long)pid, strerror(errno));
 		return -1;
 	}
 
@@ -331,8 +331,8 @@ process_clone(struct Process *retp, struct Process *proc, pid_t pid)
 {
 	if (process_bare_init(retp, proc->filename, pid, 0) < 0) {
 	fail1:
-		fprintf(stderr, "failed to clone process %d->%d : %s\n",
-			proc->pid, pid, strerror(errno));
+		fprintf(stderr, "failed to clone process %ld->%ld : %s\n",
+			(long)proc->pid, (long)pid, strerror(errno));
 		return -1;
 	}
 
@@ -458,7 +458,7 @@ open_one_pid(pid_t pid)
 {
 	Process *proc;
 	char *filename;
-	debug(DEBUG_PROCESS, "open_one_pid(pid=%d)", pid);
+	debug(DEBUG_PROCESS, "open_one_pid(pid=%ld)", (long)pid);
 
 	/* Get the filename first.  Should the trace_pid fail, we can
 	 * easily free it, untracing is more work.  */
@@ -488,7 +488,7 @@ start_one_pid(Process * proc, void * data)
 void
 open_pid(pid_t pid)
 {
-	debug(DEBUG_PROCESS, "open_pid(pid=%d)", pid);
+	debug(DEBUG_PROCESS, "open_pid(pid=%ld)", (long)pid);
 	/* If we are already tracing this guy, we should be seeing all
 	 * his children via normal tracing route.  */
 	if (pid2proc(pid) != NULL)
@@ -496,8 +496,8 @@ open_pid(pid_t pid)
 
 	/* First, see if we can attach the requested PID itself.  */
 	if (open_one_pid(pid)) {
-		fprintf(stderr, "Cannot attach to pid %u: %s\n",
-			pid, strerror(errno));
+		fprintf(stderr, "Cannot attach to pid %ld: %s\n",
+			(long)pid, strerror(errno));
 		trace_fail_warning(pid);
 		return;
 	}
@@ -519,8 +519,8 @@ open_pid(pid_t pid)
 		size_t i;
 
 		if (process_tasks(pid, &tasks, &ntasks) < 0) {
-			fprintf(stderr, "Cannot obtain tasks of pid %u: %s\n",
-				pid, strerror(errno));
+			fprintf(stderr, "Cannot obtain tasks of pid %ld: %s\n",
+				(long)pid, strerror(errno));
 			break;
 		}
 
@@ -681,8 +681,8 @@ change_process_leader(Process * proc, Process * leader)
 static enum callback_status
 clear_leader(struct Process *proc, void *data)
 {
-	debug(DEBUG_FUNCTION, "detach_task %d from leader %d",
-	      proc->pid, proc->leader->pid);
+	debug(DEBUG_FUNCTION, "detach_task %ld from leader %ld",
+	      (long)proc->pid, (long)proc->leader->pid);
 	proc->leader = NULL;
 	return CBS_CONT;
 }
@@ -690,7 +690,7 @@ clear_leader(struct Process *proc, void *data)
 void
 remove_process(Process *proc)
 {
-	debug(DEBUG_FUNCTION, "remove_proc(pid=%d)", proc->pid);
+	debug(DEBUG_FUNCTION, "remove_proc(pid=%ld)", (long)proc->pid);
 
 	if (proc->leader == proc)
 		each_task(proc, NULL, &clear_leader, NULL);
@@ -704,7 +704,8 @@ remove_process(Process *proc)
 void
 install_event_handler(Process *proc, struct event_handler *handler)
 {
-	debug(DEBUG_FUNCTION, "install_event_handler(pid=%d, %p)", proc->pid, handler);
+	debug(DEBUG_FUNCTION, "install_event_handler(pid=%ld, %p)",
+	      (long)proc->pid, handler);
 	assert(proc->event_handler == NULL);
 	proc->event_handler = handler;
 }
@@ -713,7 +714,8 @@ void
 destroy_event_handler(Process * proc)
 {
 	struct event_handler *handler = proc->event_handler;
-	debug(DEBUG_FUNCTION, "destroy_event_handler(pid=%d, %p)", proc->pid, handler);
+	debug(DEBUG_FUNCTION, "destroy_event_handler(pid=%ld, %p)",
+	      (long)proc->pid, handler);
 	assert(handler != NULL);
 	if (handler->destroy != NULL)
 		handler->destroy(handler);
@@ -730,8 +732,8 @@ breakpoint_for_symbol(struct library_symbol *libsym, struct Process *proc)
 	/* Don't enable latent or delayed symbols.  */
 	if (libsym->latent || libsym->delayed) {
 		debug(DEBUG_FUNCTION,
-		      "delayed and/or latent breakpoint pid=%d, %s@%p",
-		      proc->pid, libsym->name, libsym->enter_addr);
+		      "delayed and/or latent breakpoint pid=%ld, %s@%p",
+		      (long)proc->pid, libsym->name, libsym->enter_addr);
 		return 0;
 	}
 
@@ -841,16 +843,16 @@ proc_add_library(struct Process *proc, struct library *lib)
 	assert(lib->next == NULL);
 	lib->next = proc->libraries;
 	proc->libraries = lib;
-	debug(DEBUG_PROCESS, "added library %s@%p (%s) to %d",
-	      lib->soname, lib->base, lib->pathname, proc->pid);
+	debug(DEBUG_PROCESS, "added library %s@%p (%s) to %ld",
+	      lib->soname, lib->base, lib->pathname, (long)proc->pid);
 
 	/* Insert breakpoints for all active (non-latent) symbols.  */
 	struct library_symbol *libsym = NULL;
 	while ((libsym = library_each_symbol(lib, libsym,
 					     cb_breakpoint_for_symbol,
 					     proc)) != NULL)
-		fprintf(stderr, "Couldn't insert breakpoint for %s to %d: %s.",
-			libsym->name, proc->pid, strerror(errno));
+		fprintf(stderr, "Couldn't insert breakpoint for %s to %ld: %s.",
+			libsym->name, (long)proc->pid, strerror(errno));
 
 	/* Look through export list of the new library and compare it
 	 * with latent symbols of all libraries (including this
@@ -859,8 +861,8 @@ proc_add_library(struct Process *proc, struct library *lib)
 	while ((lib2 = proc_each_library(proc, lib2, activate_latent_in,
 					 lib->exported_names)) != NULL)
 		fprintf(stderr,
-			"Couldn't activate latent symbols for %s in %d: %s.",
-			libsym->name, proc->pid, strerror(errno));
+			"Couldn't activate latent symbols for %s in %ld: %s.",
+			libsym->name, (long)proc->pid, strerror(errno));
 }
 
 int
@@ -915,8 +917,8 @@ check_leader(struct Process *proc)
 int
 proc_add_breakpoint(struct Process *proc, struct breakpoint *bp)
 {
-	debug(DEBUG_FUNCTION, "proc_add_breakpoint(pid=%d, %s@%p)",
-	      proc->pid, breakpoint_name(bp), bp->addr);
+	debug(DEBUG_FUNCTION, "proc_add_breakpoint(pid=%ld, %s@%p)",
+	      (long)proc->pid, breakpoint_name(bp), bp->addr);
 	check_leader(proc);
 
 	/* XXX We might merge bp->libsym instead of the following
@@ -937,8 +939,8 @@ proc_add_breakpoint(struct Process *proc, struct breakpoint *bp)
 void
 proc_remove_breakpoint(struct Process *proc, struct breakpoint *bp)
 {
-	debug(DEBUG_FUNCTION, "proc_remove_breakpoint(pid=%d, %s@%p)",
-	      proc->pid, breakpoint_name(bp), bp->addr);
+	debug(DEBUG_FUNCTION, "proc_remove_breakpoint(pid=%ld, %s@%p)",
+	      (long)proc->pid, breakpoint_name(bp), bp->addr);
 	check_leader(proc);
 	struct breakpoint *removed = dict_remove(proc->breakpoints, bp->addr);
 	assert(removed == bp);

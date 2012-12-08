@@ -86,8 +86,8 @@ handle_event(Event *event)
 		os_ltrace_exiting();
 		exiting = 2;
 	}
-	debug(DEBUG_FUNCTION, "handle_event(pid=%d, type=%d)",
-	      event->proc ? event->proc->pid : -1, event->type);
+	debug(DEBUG_FUNCTION, "handle_event(pid=%ld, type=%d)",
+	      event->proc ? (long)event->proc->pid : -1L, event->type);
 
 	/* If the thread group or an individual task define an
 	   overriding event handler, give them a chance to kick in.
@@ -115,72 +115,72 @@ handle_event(Event *event)
 		debug(1, "event: none");
 		return;
 	case EVENT_SIGNAL:
-		debug(1, "[%d] event: signal (%s [%d])",
-		      event->proc->pid,
+		debug(1, "[%ld] event: signal (%s [%d])",
+		      (long)event->proc->pid,
 		      shortsignal(event->proc, event->e_un.signum),
 		      event->e_un.signum);
 		handle_signal(event);
 		return;
 	case EVENT_EXIT:
-		debug(1, "[%d] event: exit (%d)",
-		      event->proc->pid,
+		debug(1, "[%ld] event: exit (%d)",
+		      (long)event->proc->pid,
 		      event->e_un.ret_val);
 		handle_exit(event);
 		return;
 	case EVENT_EXIT_SIGNAL:
-		debug(1, "[%d] event: exit signal (%s [%d])",
-		      event->proc->pid,
+		debug(1, "[%ld] event: exit signal (%s [%d])",
+		      (long)event->proc->pid,
 		      shortsignal(event->proc, event->e_un.signum),
 		      event->e_un.signum);
 		handle_exit_signal(event);
 		return;
 	case EVENT_SYSCALL:
-		debug(1, "[%d] event: syscall (%s [%d])",
-		      event->proc->pid,
+		debug(1, "[%ld] event: syscall (%s [%d])",
+		      (long)event->proc->pid,
 		      sysname(event->proc, event->e_un.sysnum),
 		      event->e_un.sysnum);
 		handle_syscall(event);
 		return;
 	case EVENT_SYSRET:
-		debug(1, "[%d] event: sysret (%s [%d])",
-		      event->proc->pid,
+		debug(1, "[%ld] event: sysret (%s [%d])",
+		      (long)event->proc->pid,
 		      sysname(event->proc, event->e_un.sysnum),
 		      event->e_un.sysnum);
 		handle_sysret(event);
 		return;
 	case EVENT_ARCH_SYSCALL:
-		debug(1, "[%d] event: arch_syscall (%s [%d])",
-		      event->proc->pid,
+		debug(1, "[%ld] event: arch_syscall (%s [%d])",
+		      (long)event->proc->pid,
 		      arch_sysname(event->proc, event->e_un.sysnum),
 		      event->e_un.sysnum);
 		handle_arch_syscall(event);
 		return;
 	case EVENT_ARCH_SYSRET:
-		debug(1, "[%d] event: arch_sysret (%s [%d])",
-		      event->proc->pid,
+		debug(1, "[%ld] event: arch_sysret (%s [%d])",
+		      (long)event->proc->pid,
 		      arch_sysname(event->proc, event->e_un.sysnum),
 		      event->e_un.sysnum);
 		handle_arch_sysret(event);
 		return;
 	case EVENT_CLONE:
 	case EVENT_VFORK:
-		debug(1, "[%d] event: clone (%u)",
-		      event->proc->pid, event->e_un.newpid);
+		debug(1, "[%ld] event: clone (%u)",
+		      (long)event->proc->pid, event->e_un.newpid);
 		handle_clone(event);
 		return;
 	case EVENT_EXEC:
-		debug(1, "[%d] event: exec()",
-		      event->proc->pid);
+		debug(1, "[%ld] event: exec()",
+		      (long)event->proc->pid);
 		handle_exec(event);
 		return;
 	case EVENT_BREAKPOINT:
-		debug(1, "[%d] event: breakpoint %p",
-		      event->proc->pid, event->e_un.brk_addr);
+		debug(1, "[%ld] event: breakpoint %p",
+		      (long)event->proc->pid, event->e_un.brk_addr);
 		handle_breakpoint(event);
 		return;
 	case EVENT_NEW:
-		debug(1, "[%d] event: new process",
-		      event->e_un.newpid);
+		debug(1, "[%ld] event: new process",
+		      (long)event->e_un.newpid);
 		handle_new(event);
 		return;
 	default:
@@ -200,7 +200,7 @@ static int
 pending_new(pid_t pid) {
 	Pending_New * p;
 
-	debug(DEBUG_FUNCTION, "pending_new(%d)", pid);
+	debug(DEBUG_FUNCTION, "pending_new(%ld)", (long)pid);
 
 	p = pending_news;
 	while (p) {
@@ -216,7 +216,7 @@ static void
 pending_new_insert(pid_t pid) {
 	Pending_New * p;
 
-	debug(DEBUG_FUNCTION, "pending_new_insert(%d)", pid);
+	debug(DEBUG_FUNCTION, "pending_new_insert(%ld)", (long)pid);
 
 	p = malloc(sizeof(Pending_New));
 	if (!p) {
@@ -232,7 +232,7 @@ static void
 pending_new_remove(pid_t pid) {
 	Pending_New *p, *pred;
 
-	debug(DEBUG_FUNCTION, "pending_new_remove(%d)", pid);
+	debug(DEBUG_FUNCTION, "pending_new_remove(%ld)", (long)pid);
 
 	p = pending_news;
 	pred = NULL;
@@ -254,16 +254,16 @@ pending_new_remove(pid_t pid) {
 static void
 handle_clone(Event *event)
 {
-	debug(DEBUG_FUNCTION, "handle_clone(pid=%d)", event->proc->pid);
+	debug(DEBUG_FUNCTION, "handle_clone(pid=%ld)", (long)event->proc->pid);
 
 	struct Process *proc = malloc(sizeof(*proc));
 	if (proc == NULL) {
 	fail:
 		free(proc);
 		fprintf(stderr,
-			"Error during init of tracing process %d\n"
+			"Error during init of tracing process %ld\n"
 			"This process won't be traced.\n",
-			event->proc->pid);
+			(long)event->proc->pid);
 		return;
 	}
 
@@ -300,7 +300,7 @@ static void
 handle_new(Event * event) {
 	Process * proc;
 
-	debug(DEBUG_FUNCTION, "handle_new(pid=%d)", event->e_un.newpid);
+	debug(DEBUG_FUNCTION, "handle_new(pid=%ld)", (long)event->e_un.newpid);
 
 	proc = pid2proc(event->e_un.newpid);
 	if (!proc) {
@@ -329,7 +329,8 @@ shortsignal(Process *proc, int signum) {
 		sizeof signalent1 / sizeof signalent1[0]
 	};
 
-	debug(DEBUG_FUNCTION, "shortsignal(pid=%d, signum=%d)", proc->pid, signum);
+	debug(DEBUG_FUNCTION, "shortsignal(pid=%ld, signum=%d)",
+	      (long)proc->pid, signum);
 
 	if (proc->personality > sizeof signalents / sizeof signalents[0])
 		abort();
@@ -354,7 +355,8 @@ sysname(Process *proc, int sysnum) {
 		sizeof syscalent1 / sizeof syscalent1[0]
 	};
 
-	debug(DEBUG_FUNCTION, "sysname(pid=%d, sysnum=%d)", proc->pid, sysnum);
+	debug(DEBUG_FUNCTION, "sysname(pid=%ld, sysnum=%d)",
+	      (long)proc->pid, sysnum);
 
 	if (proc->personality > sizeof syscalents / sizeof syscalents[0])
 		abort();
@@ -376,7 +378,8 @@ arch_sysname(Process *proc, int sysnum) {
 	};
 	int nsyscals = sizeof arch_syscalent / sizeof arch_syscalent[0];
 
-	debug(DEBUG_FUNCTION, "arch_sysname(pid=%d, sysnum=%d)", proc->pid, sysnum);
+	debug(DEBUG_FUNCTION, "arch_sysname(pid=%ld, sysnum=%d)",
+	      (long)proc->pid, sysnum);
 
 	if (sysnum < 0 || sysnum >= nsyscals) {
 		sprintf(result, "ARCH_%d", sysnum);
@@ -394,7 +397,8 @@ arch_sysname(Process *proc, int sysnum) {
 
 static void
 handle_signal(Event *event) {
-	debug(DEBUG_FUNCTION, "handle_signal(pid=%d, signum=%d)", event->proc->pid, event->e_un.signum);
+	debug(DEBUG_FUNCTION, "handle_signal(pid=%ld, signum=%d)",
+	      (long)event->proc->pid, event->e_un.signum);
 	if (event->proc->state != STATE_IGNORED && !options.no_signals) {
 		output_line(event->proc, "--- %s (%s) ---",
 				shortsignal(event->proc, event->e_un.signum),
@@ -405,7 +409,8 @@ handle_signal(Event *event) {
 
 static void
 handle_exit(Event *event) {
-	debug(DEBUG_FUNCTION, "handle_exit(pid=%d, status=%d)", event->proc->pid, event->e_un.ret_val);
+	debug(DEBUG_FUNCTION, "handle_exit(pid=%ld, status=%d)",
+	      (long)event->proc->pid, event->e_un.ret_val);
 	if (event->proc->state != STATE_IGNORED) {
 		output_line(event->proc, "+++ exited (status %d) +++",
 				event->e_un.ret_val);
@@ -415,7 +420,8 @@ handle_exit(Event *event) {
 
 static void
 handle_exit_signal(Event *event) {
-	debug(DEBUG_FUNCTION, "handle_exit_signal(pid=%d, signum=%d)", event->proc->pid, event->e_un.signum);
+	debug(DEBUG_FUNCTION, "handle_exit_signal(pid=%ld, signum=%d)",
+	      (long)event->proc->pid, event->e_un.signum);
 	if (event->proc->state != STATE_IGNORED) {
 		output_line(event->proc, "+++ killed by %s +++",
 				shortsignal(event->proc, event->e_un.signum));
@@ -449,7 +455,8 @@ output_syscall_right(struct Process *proc, const char *name)
 
 static void
 handle_syscall(Event *event) {
-	debug(DEBUG_FUNCTION, "handle_syscall(pid=%d, sysnum=%d)", event->proc->pid, event->e_un.sysnum);
+	debug(DEBUG_FUNCTION, "handle_syscall(pid=%ld, sysnum=%d)",
+	      (long)event->proc->pid, event->e_un.sysnum);
 	if (event->proc->state != STATE_IGNORED) {
 		callstack_push_syscall(event->proc, event->e_un.sysnum);
 		if (options.syscalls)
@@ -468,7 +475,7 @@ handle_exec(Event * event) {
 	 * process_exec.  */
 	pid_t pid = proc->pid;
 
-	debug(DEBUG_FUNCTION, "handle_exec(pid=%d)", proc->pid);
+	debug(DEBUG_FUNCTION, "handle_exec(pid=%ld)", (long)proc->pid);
 	if (proc->state == STATE_IGNORED) {
 	untrace:
 		untrace_pid(pid);
@@ -479,7 +486,8 @@ handle_exec(Event * event) {
 
 	if (process_exec(proc) < 0) {
 		fprintf(stderr,
-			"couldn't reinitialize process %d after exec\n", pid);
+			"couldn't reinitialize process %ld after exec\n",
+			(long)pid);
 		goto untrace;
 	}
 
@@ -499,7 +507,8 @@ handle_exec(Event * event) {
 
 static void
 handle_arch_syscall(Event *event) {
-	debug(DEBUG_FUNCTION, "handle_arch_syscall(pid=%d, sysnum=%d)", event->proc->pid, event->e_un.sysnum);
+	debug(DEBUG_FUNCTION, "handle_arch_syscall(pid=%ld, sysnum=%d)",
+	      (long)event->proc->pid, event->e_un.sysnum);
 	if (event->proc->state != STATE_IGNORED) {
 		callstack_push_syscall(event->proc, 0xf0000 + event->e_un.sysnum);
 		if (options.syscalls) {
@@ -520,7 +529,7 @@ calc_time_spent(Process *proc) {
 	struct timeval diff;
 	struct callstack_element *elem;
 
-	debug(DEBUG_FUNCTION, "calc_time_spent(pid=%d)", proc->pid);
+	debug(DEBUG_FUNCTION, "calc_time_spent(pid=%ld)", (long)proc->pid);
 	elem = &proc->callstack[proc->callstack_depth - 1];
 
 	gettimeofday(&tv, &tz);
@@ -537,7 +546,8 @@ calc_time_spent(Process *proc) {
 
 static void
 handle_sysret(Event *event) {
-	debug(DEBUG_FUNCTION, "handle_sysret(pid=%d, sysnum=%d)", event->proc->pid, event->e_un.sysnum);
+	debug(DEBUG_FUNCTION, "handle_sysret(pid=%ld, sysnum=%d)",
+	      (long)event->proc->pid, event->e_un.sysnum);
 	if (event->proc->state != STATE_IGNORED) {
 		if (opt_T || options.summary) {
 			calc_time_spent(event->proc);
@@ -557,7 +567,8 @@ handle_sysret(Event *event) {
 
 static void
 handle_arch_sysret(Event *event) {
-	debug(DEBUG_FUNCTION, "handle_arch_sysret(pid=%d, sysnum=%d)", event->proc->pid, event->e_un.sysnum);
+	debug(DEBUG_FUNCTION, "handle_arch_sysret(pid=%ld, sysnum=%d)",
+	      (long)event->proc->pid, event->e_un.sysnum);
 	if (event->proc->state != STATE_IGNORED) {
 		if (opt_T || options.summary) {
 			calc_time_spent(event->proc);
@@ -600,8 +611,8 @@ handle_breakpoint(Event *event)
 		return;
 	}
 
-	debug(DEBUG_FUNCTION, "handle_breakpoint(pid=%d, addr=%p)",
-	      event->proc->pid, brk_addr);
+	debug(DEBUG_FUNCTION, "handle_breakpoint(pid=%ld, addr=%p)",
+	      (long)event->proc->pid, brk_addr);
 	debug(2, "event: breakpoint (%p)", brk_addr);
 
 	for (i = event->proc->callstack_depth - 1; i >= 0; i--) {
@@ -689,7 +700,8 @@ static void
 callstack_push_syscall(Process *proc, int sysnum) {
 	struct callstack_element *elem;
 
-	debug(DEBUG_FUNCTION, "callstack_push_syscall(pid=%d, sysnum=%d)", proc->pid, sysnum);
+	debug(DEBUG_FUNCTION, "callstack_push_syscall(pid=%ld, sysnum=%d)",
+	      (long)proc->pid, sysnum);
 	/* FIXME: not good -- should use dynamic allocation. 19990703 mortene. */
 	if (proc->callstack_depth == MAX_CALLDEPTH - 1) {
 		fprintf(stderr, "%s: Error: call nesting too deep!\n", __func__);
@@ -714,7 +726,8 @@ static void
 callstack_push_symfunc(Process *proc, struct library_symbol *sym) {
 	struct callstack_element *elem;
 
-	debug(DEBUG_FUNCTION, "callstack_push_symfunc(pid=%d, symbol=%s)", proc->pid, sym->name);
+	debug(DEBUG_FUNCTION, "callstack_push_symfunc(pid=%ld, symbol=%s)",
+	      (long)proc->pid, sym->name);
 	/* FIXME: not good -- should use dynamic allocation. 19990703 mortene. */
 	if (proc->callstack_depth == MAX_CALLDEPTH - 1) {
 		fprintf(stderr, "%s: Error: call nesting too deep!\n", __func__);
@@ -743,7 +756,7 @@ callstack_pop(struct Process *proc)
 	struct callstack_element *elem;
 	assert(proc->callstack_depth > 0);
 
-	debug(DEBUG_FUNCTION, "callstack_pop(pid=%d)", proc->pid);
+	debug(DEBUG_FUNCTION, "callstack_pop(pid=%ld)", (long)proc->pid);
 	elem = &proc->callstack[proc->callstack_depth - 1];
 	if (!elem->is_syscall && elem->return_addr)
 		delete_breakpoint(proc, elem->return_addr);
