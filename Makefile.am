@@ -1,5 +1,5 @@
 # This file is part of ltrace.
-# Copyright (C) 2012 Petr Machata, Red Hat Inc.
+# Copyright (C) 2012, 2013 Petr Machata, Red Hat Inc.
 # Copyright (C) 2010 Marc Kleine-Budde, Pengutronix
 # Copyright (C) 2010 Zachary T Welch, CodeSourcery
 #
@@ -33,6 +33,7 @@ noinst_LTLIBRARIES = \
 	libltrace.la
 
 libltrace_la_SOURCES = \
+	bits.c \
 	breakpoints.c \
 	debug.c \
 	demangle.c \
@@ -83,6 +84,7 @@ ltrace_LDADD = \
 
 
 noinst_HEADERS = \
+	bits.h \
 	backend.h \
 	breakpoint.h \
 	common.h \
