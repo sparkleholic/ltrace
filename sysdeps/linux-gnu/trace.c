@@ -1040,7 +1040,7 @@ ltrace_exiting_install_handler(struct process *proc)
 struct process_vfork_handler
 {
 	struct event_handler super;
-	void *bp_addr;
+	int vfork_bp_refd:1;
 };
 
 static Event *
@@ -1051,38 +1051,33 @@ process_vfork_on_event(struct event_handler *super, Event *event)
 	      event->proc->pid, event->type);
 
 	struct process_vfork_handler *self = (void *)super;
-	struct breakpoint *sbp;
+	struct process *proc = event->proc;
 	assert(self != NULL);
 
 	switch (event->type) {
 	case EVENT_BREAKPOINT:
-		/* Remember the vfork return breakpoint.  */
-		if (self->bp_addr == 0)
-			self->bp_addr = event->e_un.brk_addr;
+		/* We turn on the vfork return breakpoint (which
+		 * should be the one that we have tripped over just
+		 * now) one extra time, so that the vfork parent hits
+		 * it as well.  */
+		if (!self->vfork_bp_refd) {
+			struct breakpoint *const sbp =
+				dict_find_entry(proc->leader->breakpoints,
+						event->e_un.brk_addr);
+			assert(sbp != NULL);
+			breakpoint_turn_on(sbp, proc->leader);
+			self->vfork_bp_refd = 1;
+		}
 		break;
 
 	case EVENT_EXIT:
 	case EVENT_EXIT_SIGNAL:
 	case EVENT_EXEC:
-		/* Smuggle back in the vfork return breakpoint, so
-		 * that our parent can trip over it once again.  */
-		if (self->bp_addr != 0) {
-			sbp = dict_find_entry(event->proc->leader->breakpoints,
-					      self->bp_addr);
-			if (sbp != NULL)
-				assert(sbp->libsym == NULL);
-			/* We don't mind failing that, it's not a big
-			 * deal to not display one extra vfork return.  */
-			insert_breakpoint(event->proc->parent,
-					  self->bp_addr, NULL);
-		}
-
-		continue_process(event->proc->parent->pid);
-
 		/* Remove the leader that we artificially set up
 		 * earlier.  */
-		change_process_leader(event->proc, event->proc);
-		destroy_event_handler(event->proc);
+		change_process_leader(proc, proc);
+		destroy_event_handler(proc);
+		continue_process(proc->parent->pid);
 
 	default:
 		;
