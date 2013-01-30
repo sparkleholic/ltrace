@@ -314,8 +314,7 @@ clone_single_bp(void *key, void *value, void *u)
 
 	struct breakpoint *clone = malloc(sizeof(*clone));
 	if (clone == NULL
-	    || breakpoint_clone(clone, data->new_proc,
-				bp, data->old_proc) < 0) {
+	    || breakpoint_clone(clone, data->new_proc, bp) < 0) {
 	fail:
 		free(clone);
 		data->error = -1;
