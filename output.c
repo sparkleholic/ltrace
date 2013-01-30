@@ -1,6 +1,6 @@
 /*
  * This file is part of ltrace.
- * Copyright (C) 2011,2012 Petr Machata, Red Hat Inc.
+ * Copyright (C) 2011,2012,2013 Petr Machata, Red Hat Inc.
  * Copyright (C) 2010 Joe Damato
  * Copyright (C) 1997,1998,1999,2001,2002,2003,2004,2007,2008,2009 Juan Cespedes
  * Copyright (C) 2006 Paul Gilliam, IBM Corporation
@@ -119,12 +119,15 @@ begin_of_line(struct process *proc, int is_func, int indent)
 		}
 	}
 	if (opt_i) {
-		if (is_func)
+		if (is_func) {
+			struct callstack_element *stel
+				= &proc->callstack[proc->callstack_depth - 1];
 			current_column += fprintf(options.output, "[%p] ",
-						  proc->return_addr);
-		else
+						  stel->return_addr);
+		} else {
 			current_column += fprintf(options.output, "[%p] ",
 						  proc->instruction_pointer);
+		}
 	}
 	if (options.indent > 0 && indent) {
 		output_indent(proc);
