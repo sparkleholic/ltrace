@@ -1,6 +1,6 @@
 /*
  * This file is part of ltrace.
- * Copyright (C) 2006,2010,2011,2012 Petr Machata, Red Hat Inc.
+ * Copyright (C) 2006,2010,2011,2012,2013 Petr Machata, Red Hat Inc.
  * Copyright (C) 2010 Zachary T Welch, CodeSourcery
  * Copyright (C) 2010 Joe Damato
  * Copyright (C) 1997,1998,2001,2004,2007,2008,2009 Juan Cespedes
@@ -141,8 +141,9 @@ elf_get_section_if(struct ltelf *lte, Elf_Scn **tgt_sec, GElf_Shdr *tgt_shdr,
 			return 0;
 		}
 	}
-	return -1;
 
+	*tgt_sec = NULL;
+	return 0;
 }
 
 static int
