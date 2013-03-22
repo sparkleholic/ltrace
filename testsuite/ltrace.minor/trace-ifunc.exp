@@ -1,0 +1,87 @@
+# This file is part of ltrace.
+# Copyright (C) 2013 Petr Machata, Red Hat Inc.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation; either version 2 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+# 02110-1301 USA
+
+# This tests that ltrace properly traces IRELATIVE PLT relocations in
+# main binary.
+
+ltraceMatch [ltraceRun -e@MAIN -- [ltraceCompile {} [ltraceSource c {
+    int xyz (int, int);
+    void *xyz_ifunc (void) __asm__ ("xyz");
+    __asm__(".type xyz, %gnu_indirect_function");
+
+    int
+    xyz_A (int i, int j)
+    {
+      return i + j;
+    }
+
+    void *
+    xyz_ifunc (void)
+    {
+      return &xyz_A;
+    }
+
+    int
+    main(int argc, char *argv[])
+    {
+      return xyz (argc, argc + 1);
+    }
+}]]] {
+    {{->xyz\(} == 1}
+}
+
+# This tests the same thing, but inside a DSO.
+
+set libll [ltraceCompile libll.so [ltraceSource c {
+    int xyz (int, int) __attribute__ ((visibility("hidden")));
+    void *xyz_ifunc (void) __asm__ ("xyz");
+    __asm__(".type xyz, %gnu_indirect_function");
+
+    int
+    xyz_A (int i, int j)
+    {
+      return i + j;
+    }
+
+    void *
+    xyz_ifunc (void)
+    {
+      return &xyz_A;
+    }
+
+    int
+    yzw (int i, int j)
+    {
+      return xyz(i, 0) + xyz(0, j);
+    }
+}]]
+
+set bin [ltraceCompile {} $libll [ltraceSource c {
+    int yzw (int, int);
+    int
+    main(int argc, char *argv[])
+    {
+      return yzw (argc, argc + 1);
+    }
+}]]
+
+ltraceMatch [ltraceRun -e@libll.so* -- $bin] {
+    {{->xyz\(} == 2}
+}
+
+ltraceDone
