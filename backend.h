@@ -292,6 +292,7 @@ enum plt_status {
 	PLT_FAIL,
 	PLT_OK,
 	PLT_DEFAULT,
+	PLT_IRELATIVE,
 };
 
 /* The following callback has to be implemented in backend if arch.h
@@ -305,7 +306,12 @@ enum plt_status {
  * If this function returns PLT_DEFAULT, PLT address is obtained by
  * calling arch_plt_sym_val, and symbol is allocated.  If PLT_OK or
  * PLT_DEFAULT are returned, the chain of symbols passed back in RET
- * is added to library under construction.  */
+ * is added to library under construction.
+ *
+ * Returning PLT_IRELATIVE is like returning PLT_DEFAULT, except the
+ * relocation is considered to be R_*_IRELATIVE.  A symbol is looked
+ * up that matches that relocation's addend, and name of that symbol
+ * is used for tracing this PLT slot.  */
 enum plt_status arch_elf_add_plt_entry(struct process *proc, struct ltelf *lte,
 				       const char *name, GElf_Rela *rela,
 				       size_t i, struct library_symbol **ret);

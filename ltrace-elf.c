@@ -592,6 +592,36 @@ mark_chain_latent(struct library_symbol *libsym)
 	}
 }
 
+static int
+find_symbol_addr_in(GElf_Addr addr, Elf_Data *symtab, size_t count,
+		    GElf_Sym *ret)
+{
+	size_t i;
+	for (i = 0; i < count; ++i) {
+		GElf_Sym sym;
+		if (gelf_getsym(symtab, i, &sym) == NULL)
+			return -1;
+		if (sym.st_value == addr) {
+			*ret = sym;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/* This returns <0 for errors, 0 for not-found, 1 if found in dynsym,
+ * 2 if found in symtab.  */
+static int
+find_symbol_addr(struct ltelf *lte, GElf_Addr addr, GElf_Sym *ret)
+{
+	int rc;
+	if ((rc = find_symbol_addr_in(addr, lte->dynsym,
+				      lte->dynsym_count, ret)) != 0)
+		return rc;
+	return 2 * find_symbol_addr_in(addr, lte->symtab,
+				       lte->symtab_count, ret);
+}
+
 static size_t
 snip_version(const char *name)
 {
@@ -627,6 +657,7 @@ populate_plt(struct process *proc, const char *filename,
 			continue; /* Skip this entry.  */
 
 		char const *name = lte->dynstr + sym.st_name;
+		int own_name = 0;
 
 		/* If the symbol wasn't matched, reject it, unless we
 		 * need to keep latent PLT breakpoints for tracing
@@ -639,12 +670,49 @@ populate_plt(struct process *proc, const char *filename,
 		struct library_symbol *libsym = NULL;
 		switch (arch_elf_add_plt_entry(proc, lte, name,
 					       &rela, i, &libsym)) {
+			GElf_Sym tgt;
+			int rc;
+		case PLT_FAIL:
+			return -1;
+		case PLT_IRELATIVE:
+			rc = find_symbol_addr(lte, rela.r_addend, &tgt);
+			if (rc < 0) {
+				fprintf(stderr, "Error when looking for a "
+					"symbol corresponding to IRELATIVE "
+					"PLT entry #%zd from %s: %s\n",
+					i, filename, strerror(errno));
+				return -1;
+			}
+
+			/* If the symbol isn't there, construct an
+			 * artificial name.  */
+			if (rc == 0) {
+				char buf[30];
+				sprintf(buf, "ifunc@%#" PRIx64, rela.r_addend);
+				name = strdup(buf);
+				own_name = 1;
+			} else {
+				const char *tab = rc == 1
+					? lte->dynstr : lte->strtab;
+				name = strdup_snip_version(tab + tgt.st_name);
+				own_name = 1;
+			}
+
+			if (name == NULL) {
+				fprintf(stderr, "Couldn't get name of IRELATIVE"
+					" PLT entry #%zd from %s: %s\n",
+					i, filename, strerror(errno));
+				return -1;
+			}
+
+			/* fall-through */
 		case PLT_DEFAULT:
 			if (default_elf_add_plt_entry(proc, lte, name,
-						      &rela, i, &libsym) < 0)
-			/* fall-through */
-		case PLT_FAIL:
+						      &rela, i, &libsym) < 0) {
+				if (own_name)
+					free((char *)name);
 				return -1;
+			}
 			/* fall-through */
 		case PLT_OK:
 			if (libsym != NULL) {
@@ -655,6 +723,8 @@ populate_plt(struct process *proc, const char *filename,
 					mark_chain_latent(libsym);
 				library_add_symbol(lib, libsym);
 			}
+			if (own_name)
+				free((char *)name);
 		}
 	}
 	return 0;
