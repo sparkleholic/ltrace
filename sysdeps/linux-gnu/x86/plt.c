@@ -1,5 +1,6 @@
 /*
  * This file is part of ltrace.
+ * Copyright (C) 2013 Petr Machata, Red Hat Inc.
  * Copyright (C) 2004,2008,2009 Juan Cespedes
  *
  * This program is free software; you can redistribute it and/or
@@ -22,6 +23,19 @@
 #include "proc.h"
 #include "common.h"
 #include "library.h"
+
+enum plt_status
+arch_elf_add_plt_entry(struct process *proc, struct ltelf *lte,
+		       const char *a_name, GElf_Rela *rela, size_t ndx,
+		       struct library_symbol **ret)
+{
+	unsigned irelative = proc->e_machine == EM_X86_64
+		? R_X86_64_IRELATIVE : R_386_IRELATIVE;
+	if (GELF_R_TYPE(rela->r_info) == irelative)
+		return PLT_IRELATIVE;
+	else
+		return PLT_DEFAULT;
+}
 
 GElf_Addr
 arch_plt_sym_val(struct ltelf *lte, size_t ndx, GElf_Rela * rela)
