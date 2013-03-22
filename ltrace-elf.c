@@ -592,6 +592,27 @@ mark_chain_latent(struct library_symbol *libsym)
 	}
 }
 
+static size_t
+snip_version(const char *name)
+{
+	const char *version = strchr(name, '@');
+	return version != NULL
+		? (assert(version > name), (size_t)(version - name))
+		: strlen(name);
+}
+
+static char *
+strdup_snip_version(const char *name)
+{
+	size_t len = snip_version(name);
+	char *ret = malloc(len + 1);
+	if (ret != NULL) {
+		memcpy(ret, name, len);
+		ret[len] = 0;
+	}
+	return ret;
+}
+
 static int
 populate_plt(struct process *proc, const char *filename,
 	     struct ltelf *lte, struct library *lib,
@@ -704,7 +725,7 @@ populate_this_symtab(struct process *proc, const char *filename,
 		if (gelf_getsym(symtab, i, &sym) == NULL) {
 		fail:
 			fprintf(stderr,
-				"couldn't get symbol #%zd from %s: %s\n",
+				"Couldn't get symbol #%zd from %s: %s\n",
 				i, filename, elf_errmsg(-1));
 			continue;
 		}
@@ -715,39 +736,36 @@ populate_this_symtab(struct process *proc, const char *filename,
 		    || sym.st_shndx == STN_UNDEF)
 			continue;
 
-		/* Find symbol name and snip version.  */
-		const char *orig_name = strtab + sym.st_name;
-		const char *version = strchr(orig_name, '@');
-		size_t len = version != NULL ? (assert(version > orig_name),
-						(size_t)(version - orig_name))
-			: strlen(orig_name);
-		char name[len + 1];
-		memcpy(name, orig_name, len);
-		name[len] = 0;
+		char *name = strdup_snip_version(strtab + sym.st_name);
+		int own_name = 1;
+		if (name == NULL) {
+			fprintf(stderr, "Couldn't get name of symbol "
+				"#%zd from %s: %s\n",
+				i, filename, strerror(errno));
+			goto next;
+		}
 
 		/* If we are interested in exports, store this name.  */
-		char *name_copy = NULL;
 		if (names != NULL) {
-			struct library_exported_name *export = NULL;
-			name_copy = strdup(name);
+			struct library_exported_name *export
+				= malloc(sizeof(*export));
 
-			if (name_copy == NULL
-			    || (export = malloc(sizeof(*export))) == NULL) {
-				free(name_copy);
+			if (export == NULL) {
 				fprintf(stderr, "Couldn't store symbol %s.  "
 					"Tracing may be incomplete.\n", name);
 			} else {
-				export->name = name_copy;
-				export->own_name = 1;
+				export->name = name;
+				export->own_name = own_name;
 				export->next = *names;
 				*names = export;
+				own_name = 0;
 			}
 		}
 
 		/* If the symbol is not matched, skip it.  We already
 		 * stored it to export list above.  */
 		if (!filter_matches_symbol(options.static_filter, name, lib))
-			continue;
+			goto next;
 
 		arch_addr_t addr = (arch_addr_t)
 			(uintptr_t)(sym.st_value + lte->bias);
@@ -763,18 +781,7 @@ populate_this_symtab(struct process *proc, const char *filename,
 			fprintf(stderr,
 				"couldn't translate address of %s@%s: %s\n",
 				name, lib->soname, strerror(errno));
-			continue;
-		}
-
-		char *full_name;
-		int own_full_name = 1;
-		if (name_copy == NULL) {
-			full_name = strdup(name);
-			if (full_name == NULL)
-				goto fail;
-		} else {
-			full_name = name_copy;
-			own_full_name = 0;
+			goto next;
 		}
 
 		/* Look whether we already have a symbol for this
@@ -788,21 +795,25 @@ populate_this_symtab(struct process *proc, const char *filename,
 			struct library_symbol *libsym = malloc(sizeof(*libsym));
 			if (libsym == NULL
 			    || library_symbol_init(libsym, naddr,
-						   full_name, own_full_name,
+						   name, own_name,
 						   LS_TOPLT_NONE) < 0) {
 				--num_symbols;
 				goto fail;
 			}
 			unique->libsym = libsym;
 			unique->addr = naddr;
+			own_name = 0;
 
-		} else if (strlen(full_name) < strlen(unique->libsym->name)) {
+		} else if (strlen(name) < strlen(unique->libsym->name)) {
 			library_symbol_set_name(unique->libsym,
-						full_name, own_full_name);
+						name, own_name);
+			own_name = 0;
 
-		} else if (own_full_name) {
-			free(full_name);
 		}
+
+	next:
+		if (own_name)
+			free(name);
 	}
 
 	/* Now we do the union of this set of unique symbols with
