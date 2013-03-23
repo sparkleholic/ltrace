@@ -557,6 +557,7 @@ elf_get_sym_info(struct ltelf *lte, const char *filename,
 		rela->r_offset = rel.r_offset;
 		rela->r_info = rel.r_info;
 		rela->r_addend = 0;
+
 	} else {
 		ret = gelf_getrela(lte->relplt, i, rela);
 	}
@@ -643,6 +644,51 @@ strdup_snip_version(const char *name)
 	return ret;
 }
 
+static GElf_Sxword
+get_plt_addend(struct ltelf *lte, GElf_Rela *rela)
+{
+	/* We keep all relocations in RELA format internally, by
+	 * simply converting from the REL format.  But we only
+	 * initialize the addend field with 0.  Now that we have a use
+	 * for the addend, we actually need to read it. */
+
+	if (lte->relplt->d_type == ELF_T_RELA)
+		return rela->r_addend;
+
+	/* Even though the REL section is actually .rel.plt, the
+	 * offsets may point to another section, such as .got, so we
+	 * can't use sh_info to get our hands on the section where
+	 * addends are stored.  Look it up.  */
+	Elf_Scn *sec;
+	GElf_Shdr shdr;
+	if (elf_get_section_covering(lte, rela->r_offset, &sec, &shdr) < 0
+	    || sec == NULL)
+		return 0;
+	Elf_Data *data = elf_getdata(sec, NULL);
+	if (data == NULL || data->d_buf == NULL)
+		return 0;
+
+	GElf_Off off = rela->r_offset - shdr.sh_addr;
+	uint64_t addend;
+	if (lte->ehdr.e_ident[EI_CLASS] == ELFCLASS32) {
+		uint32_t tmp;
+		int rc = elf_read_u32(data, off, &tmp);
+
+		/* Since elf_get_section_covering gave us this
+		 * section, the offset really ought to be inside
+		 * it.  */
+		assert(rc >= 0);
+
+		addend = tmp;
+
+	} else {
+		int rc = elf_read_u64(data, off, &addend);
+		assert(rc >= 0);
+	}
+
+	return addend;
+}
+
 static int
 populate_plt(struct process *proc, const char *filename,
 	     struct ltelf *lte, struct library *lib,
@@ -672,10 +718,12 @@ populate_plt(struct process *proc, const char *filename,
 					       &rela, i, &libsym)) {
 			GElf_Sym tgt;
 			int rc;
+			GElf_Sxword addend;
 		case PLT_FAIL:
 			return -1;
 		case PLT_IRELATIVE:
-			rc = find_symbol_addr(lte, rela.r_addend, &tgt);
+			addend = get_plt_addend(lte, &rela);
+			rc = find_symbol_addr(lte, addend, &tgt);
 			if (rc < 0) {
 				fprintf(stderr, "Error when looking for a "
 					"symbol corresponding to IRELATIVE "
