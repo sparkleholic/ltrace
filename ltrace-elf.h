@@ -40,28 +40,34 @@ struct ltelf {
 	int fd;
 	Elf *elf;
 	GElf_Ehdr ehdr;
+
 	Elf_Data *dynsym;
-	size_t dynsym_count;
 	const char *dynstr;
+	size_t dynsym_count;
+
+	Elf_Data *symtab;
+	const char *strtab;
+	size_t symtab_count;
+
 	GElf_Addr plt_addr;
 	GElf_Word plt_flags;
 	size_t plt_size;
-	Elf_Data *relplt;
 	Elf_Data *plt_data;
+
+	Elf_Data *relplt;
 	size_t relplt_count;
-	Elf_Data *symtab;
-	const char *strtab;
+	size_t relplt_size;
+
 	const char *soname;
-	size_t symtab_count;
 	Elf_Data *opd;
 	GElf_Addr *opd_addr;
 	size_t opd_size;
 	GElf_Addr dyn_addr;
 	size_t dyn_sz;
-	size_t relplt_size;
 	GElf_Addr bias;
 	GElf_Addr entry_addr;
 	GElf_Addr base_addr;
+
 	struct arch_ltelf_data arch;
 };
 
