@@ -190,7 +190,7 @@ static bool get_integer_base_type(enum arg_type *type, int byte_size,
 		return true;
 	}
 
-	if (byte_size == sizeof(long)) {
+	if (byte_size == sizeof(long long)) {
 		*type = is_signed ? ARGTYPE_LONG : ARGTYPE_ULONG;
 		return true;
 	}
